@@ -231,7 +231,7 @@ function ensureSamplesLoaded() {
   _decode(endSampleUrl, 'end');
   _decode(completeSampleUrl, 'complete');
 }
-function playSample(key, { gain = 1, delay = 0, rate = 1 } = {}) {
+function playSample(key, { gain = 1, delay = 0, rate = 1, maxDuration = null, fadeOut = 0 } = {}) {
   const ctx = getCtx();
   if (!ctx || !_buffers[key]) return false;
   const src = ctx.createBufferSource();
@@ -240,7 +240,16 @@ function playSample(key, { gain = 1, delay = 0, rate = 1 } = {}) {
   const g = ctx.createGain();
   g.gain.value = gain;
   src.connect(g); g.connect(ctx.destination);
-  src.start(ctx.currentTime + delay);
+  const when = ctx.currentTime + delay;
+  src.start(when);
+  if (maxDuration != null) {
+    if (fadeOut > 0) {
+      const fadeStart = Math.max(when, when + maxDuration - fadeOut);
+      g.gain.setValueAtTime(gain, fadeStart);
+      g.gain.linearRampToValueAtTime(0.001, when + maxDuration);
+    }
+    src.stop(when + maxDuration);
+  }
   return true;
 }
 
@@ -357,9 +366,9 @@ const cues = {
   preTick(n) {
     beep({ freq: 740, duration: 0.18, gain: 0.9, cutoff: 2200 });
   },
-  // Round start — real boxing bell sample (synth fallback)
+  // Round start — boxing bell sample, pitched down slightly for warmth
   go() {
-    if (!playSample('go', { gain: 1.4 })) {
+    if (!playSample('go', { gain: 1.4, rate: 0.9 })) {
       thump({ start: 160, end: 55, decay: 0.22, gain: 0.8 });
       beep({ freq: 880, duration: 0.4, gain: 1.0 });
     }
@@ -368,17 +377,16 @@ const cues = {
   warning10sec() {
     beep({ freq: 440, duration: 0.55, gain: 0.9, cutoff: 1600 });
   },
-  // Slot change — boxing bell sample at high gain
+  // Slot change — boxing bell sample at high gain, pitched down to match `go`
   transition() {
-    if (!playSample('go', { gain: 1.4 })) {
+    if (!playSample('go', { gain: 1.4, rate: 0.9 })) {
       thump({ start: 160, end: 55, decay: 0.22, gain: 0.7 });
       beep({ freq: 880, duration: 0.35, gain: 0.95 });
     }
   },
-  // Halfway switch — end-of-round bell sample played slightly faster for a
-  // distinct mid-set ping. Falls back to synth descending sweep.
+  // Halfway switch — end-of-round bell sample, slightly distinct from `go`
   halfway() {
-    if (!playSample('end', { gain: 0.85, rate: 1.15 })) {
+    if (!playSample('end', { gain: 0.95, rate: 1.0 })) {
       crack({ freq: 1600, q: 1.0, decay: 0.16, gain: 0.45 });
       blip({ freq: 880, decay: 0.22, gain: 0.4, delay: 0.02 });
       blip({ freq: 660, decay: 0.28, gain: 0.3, delay: 0.08 });
@@ -389,9 +397,10 @@ const cues = {
     crack({ freq: 600, q: 0.8, decay: 0.3, gain: 0.35, type: 'lowpass' });
     blip({ freq: 330, decay: 0.4, gain: 0.3, delay: 0.02 });
   },
-  // Session complete — 3-hit boxing bell finale sample, falls back to synth chord.
+  // Session complete — boxing bell finale, pitched down + truncated to 2 dings
+  // (file is 3 dings over ~3s; at rate 0.9 we stop at 2.1s wall-clock with a 0.2s fade).
   complete() {
-    if (playSample('complete', { gain: 0.95 })) return;
+    if (playSample('complete', { gain: 1.1, rate: 0.9, maxDuration: 2.1, fadeOut: 0.2 })) return;
     thump({ start: 140, end: 50, decay: 0.25, gain: 0.6 });
     crack({ freq: 3500, q: 1.2, decay: 0.15, gain: 0.5 });
     blip({ freq: 523, decay: 0.4, gain: 0.32 });
