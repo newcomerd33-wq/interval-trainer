@@ -40,16 +40,54 @@ function generateMixes(slots) {
   return mixes;
 }
 
-const CONFIGS = TEMPLATES.flatMap(([duration, intervalSec, slots, sets], tIdx) =>
+const UNIFORM_CONFIGS = TEMPLATES.flatMap(([duration, intervalSec, slots, sets], tIdx) =>
   generateMixes(slots).map(({ b, u }, mIdx) => ({
-    id: `${String(tIdx).padStart(2, '0')}${mIdx}`,
-    duration, intervalSec, slots, sets,
+    id: `U-${String(tIdx).padStart(2, '0')}${mIdx}`,
+    style: 'uniform',
+    duration, intervalSec, extendedSec: null, sets,
     bilateral: b, unilateral: u,
     totalEx: b + u,
+    slots,                            // slot count per round = b + 2u
     cycleSec: slots * intervalSec,
     totalSets: (b + u) * sets,
   }))
 );
+
+// Asymmetric configs use intervalSec for bilateral slots and intervalSec+30 for combined-unilateral slots.
+function generateAsymmetricConfigs() {
+  const durations = [15, 20, 30, 45, 60];
+  const bases = [45, 60, 75, 90, 120];
+  const out = [];
+  let idx = 0;
+  for (const duration of durations) {
+    const totalSec = duration * 60;
+    for (const intervalSec of bases) {
+      const extendedSec = intervalSec + 30;
+      for (let b = 0; b <= 7; b++) {
+        for (let u = 1; u <= 6 && b + u <= 8; u++) {
+          const cycle = b * intervalSec + u * extendedSec;
+          if (totalSec % cycle !== 0) continue;
+          const rounds = totalSec / cycle;
+          if (rounds < 3 || rounds > 20) continue;
+          out.push({
+            id: `A-${String(idx++).padStart(3, '0')}`,
+            style: 'asymmetric',
+            duration, intervalSec, extendedSec, sets: rounds,
+            bilateral: b, unilateral: u,
+            totalEx: b + u,
+            slots: b + u,             // each U is ONE slot (just longer)
+            cycleSec: cycle,
+            totalSets: (b + u) * rounds,
+          });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+const ASYMMETRIC_CONFIGS = generateAsymmetricConfigs();
+const CONFIGS = [...UNIFORM_CONFIGS, ...ASYMMETRIC_CONFIGS];
 
 // =============================================================================
 // HELPERS
@@ -79,16 +117,21 @@ function generateInitialBlocks(bilateral, unilateral) {
   return blocks;
 }
 
-function expandBlocksToSlots(blocks) {
+function expandBlocksToSlots(blocks, config) {
+  const isAsym = config?.style === 'asymmetric';
+  const baseDur = config?.intervalSec ?? null;
+  const extDur = config?.extendedSec ?? null;
   const slots = [];
   for (const block of blocks) {
     if (block.type === 'B') {
-      slots.push({ name: block.name, side: null });
+      slots.push({ name: block.name, side: null, duration: baseDur });
     } else if (block.type === 'A') {
-      slots.push({ name: block.name, side: null, alternating: true });
+      slots.push({ name: block.name, side: null, alternating: true, duration: baseDur });
+    } else if (isAsym) {
+      slots.push({ name: block.name, side: null, combined: true, duration: extDur });
     } else {
-      slots.push({ name: block.name, side: 'Left' });
-      slots.push({ name: block.name, side: 'Right' });
+      slots.push({ name: block.name, side: 'Left', duration: baseDur });
+      slots.push({ name: block.name, side: 'Right', duration: baseDur });
     }
   }
   return slots;
@@ -161,23 +204,27 @@ function Metric({ label, value }) {
   );
 }
 
-function SlotStrip({ blocks }) {
+function SlotStrip({ blocks, style }) {
+  const isAsym = style === 'asymmetric';
   const slots = blocks.flatMap(block => {
     if (block.type === 'B') return [{ t: 'B' }];
     if (block.type === 'A') return [{ t: 'A' }];
+    if (isAsym) return [{ t: 'C' }];
     return [{ t: 'L' }, { t: 'R' }];
   });
   const styleFor = (t) => {
     if (t === 'B') return 'bg-zinc-800 text-zinc-200 border-zinc-700';
     if (t === 'A') return 'bg-cyan-950 text-cyan-300 border-cyan-800';
+    if (t === 'C') return 'bg-fuchsia-950 text-fuchsia-300 border-fuchsia-800';
     return 'bg-amber-950 text-amber-300 border-amber-800';
   };
+  const widthFor = (t) => t === 'C' ? 'w-12' : 'w-7';
   return (
     <div className="flex gap-0.5 flex-wrap">
       {slots.map((slot, idx) => (
         <div
           key={idx}
-          className={`w-7 h-7 flex items-center justify-center font-mono text-[10px] font-bold border ${styleFor(slot.t)}`}
+          className={`${widthFor(slot.t)} h-7 flex items-center justify-center font-mono text-[10px] font-bold border ${styleFor(slot.t)}`}
         >
           {slot.t}
         </div>
@@ -201,20 +248,32 @@ function BackButton({ onClick, label = 'Back' }) {
 // BROWSE VIEW
 // =============================================================================
 function ConfigCard({ config, onSelect }) {
-  const { id, duration, intervalSec, slots, sets, bilateral, unilateral, totalEx, cycleSec, totalSets } = config;
+  const { id, style, duration, intervalSec, extendedSec, slots, sets, bilateral, unilateral, totalEx, cycleSec, totalSets } = config;
+  const isAsym = style === 'asymmetric';
   const previewBlocks = useMemo(() => generateInitialBlocks(bilateral, unilateral), [bilateral, unilateral]);
+  const intervalDisplay = isAsym ? `${intervalSec}s + ${extendedSec}s` : `${intervalSec}s`;
+  const composition = isAsym
+    ? `${describeMix(bilateral, unilateral)} (combined)`
+    : describeMix(bilateral, unilateral);
 
   return (
     <button
       onClick={() => onSelect(config)}
-      className="w-full text-left border border-zinc-800 hover:border-amber-400/60 transition-colors bg-zinc-900/40 group"
+      className={`w-full text-left border transition-colors bg-zinc-900/40 group ${
+        isAsym
+          ? 'border-fuchsia-900/60 hover:border-fuchsia-400/60'
+          : 'border-zinc-800 hover:border-amber-400/60'
+      }`}
     >
-      <div className="flex items-baseline justify-between px-4 py-3 border-b border-zinc-800/60">
-        <div className="flex items-baseline gap-3">
-          <span className="font-mono text-[10px] text-zinc-600 uppercase tracking-widest">CFG-{id}</span>
-          <span className="font-mono text-sm text-amber-400">{duration} min · {intervalSec}s</span>
+      <div className="flex items-baseline justify-between px-4 py-3 border-b border-zinc-800/60 gap-3">
+        <div className="flex items-baseline gap-3 min-w-0">
+          <span className="font-mono text-[10px] text-zinc-600 uppercase tracking-widest whitespace-nowrap">CFG-{id}</span>
+          <span className={`font-mono text-sm whitespace-nowrap ${isAsym ? 'text-fuchsia-400' : 'text-amber-400'}`}>
+            {duration} min · {intervalDisplay}
+          </span>
         </div>
-        <span className="font-mono text-xs text-zinc-500 uppercase tracking-wider">
+        <span className="font-mono text-xs text-zinc-500 uppercase tracking-wider whitespace-nowrap">
+          {isAsym && <span className="text-fuchsia-400 mr-2">ASYM</span>}
           {totalEx} {totalEx === 1 ? 'exercise' : 'exercises'}
         </span>
       </div>
@@ -226,10 +285,10 @@ function ConfigCard({ config, onSelect }) {
       <div className="px-4 py-4 flex items-end justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-2">Composition</div>
-          <div className="text-sm text-zinc-200 mb-3">{describeMix(bilateral, unilateral)}</div>
-          <SlotStrip blocks={previewBlocks} />
+          <div className="text-sm text-zinc-200 mb-3">{composition}</div>
+          <SlotStrip blocks={previewBlocks} style={style} />
         </div>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-600 group-hover:text-amber-400 transition-colors whitespace-nowrap">
+        <div className={`text-[10px] font-mono uppercase tracking-widest text-zinc-600 group-hover:${isAsym ? 'text-fuchsia-400' : 'text-amber-400'} transition-colors whitespace-nowrap`}>
           Select →
         </div>
       </div>
@@ -238,13 +297,21 @@ function ConfigCard({ config, onSelect }) {
 }
 
 function BrowseView({ onSelectConfig }) {
+  const [styleFilter, setStyleFilter] = useState('uniform');
   const [duration, setDuration] = useState('all');
   const [intervalSec, setIntervalSec] = useState('all');
   const [exCount, setExCount] = useState('any');
   const [uniFilter, setUniFilter] = useState('any');
   const [minSets, setMinSets] = useState(3);
 
+  const setStyleAndAdjust = (next) => {
+    setStyleFilter(next);
+    if (next === 'asymmetric') setUniFilter('some');
+    else setUniFilter('any');
+  };
+
   const filtered = useMemo(() => CONFIGS.filter(c => {
+    if (c.style !== styleFilter) return false;
     if (duration !== 'all' && c.duration !== duration) return false;
     if (intervalSec !== 'all' && c.intervalSec !== intervalSec) return false;
     if (exCount !== 'any' && c.totalEx !== exCount) return false;
@@ -253,11 +320,14 @@ function BrowseView({ onSelectConfig }) {
     if (uniFilter === 'some' && c.unilateral === 0) return false;
     if (uniFilter === 'pure' && c.bilateral > 0) return false;
     return true;
-  }), [duration, intervalSec, exCount, minSets, uniFilter]);
+  }), [styleFilter, duration, intervalSec, exCount, minSets, uniFilter]);
+
+  const styleTotal = useMemo(() => CONFIGS.filter(c => c.style === styleFilter).length, [styleFilter]);
 
   const resetFilters = () => {
     setDuration('all'); setIntervalSec('all'); setExCount('any');
-    setUniFilter('any'); setMinSets(3);
+    setUniFilter(styleFilter === 'asymmetric' ? 'some' : 'any');
+    setMinSets(3);
   };
 
   return (
@@ -276,6 +346,10 @@ function BrowseView({ onSelectConfig }) {
       </div>
 
       <div className="space-y-4 mb-6">
+        <FilterGroup label="Interval style">
+          <PillButton active={styleFilter === 'uniform'} onClick={() => setStyleAndAdjust('uniform')}>Uniform</PillButton>
+          <PillButton active={styleFilter === 'asymmetric'} onClick={() => setStyleAndAdjust('asymmetric')}>Asymmetric (combined U)</PillButton>
+        </FilterGroup>
         <FilterGroup label="Duration">
           <PillButton active={duration === 'all'} onClick={() => setDuration('all')}>All</PillButton>
           {[15, 20, 30, 45, 60].map(d => (
@@ -318,10 +392,14 @@ function BrowseView({ onSelectConfig }) {
       </div>
 
       <div className="flex items-center justify-between mb-4 pb-3 border-b border-zinc-800">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">Showing</div>
+        <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">
+          Showing · <span className={styleFilter === 'asymmetric' ? 'text-fuchsia-400' : 'text-amber-400'}>
+            {styleFilter === 'asymmetric' ? 'asymmetric' : 'uniform'}
+          </span>
+        </div>
         <div className="font-mono">
-          <span className="text-2xl text-amber-400 font-bold">{filtered.length}</span>
-          <span className="text-sm text-zinc-500 ml-2">/ {CONFIGS.length}</span>
+          <span className={`text-2xl font-bold ${styleFilter === 'asymmetric' ? 'text-fuchsia-400' : 'text-amber-400'}`}>{filtered.length}</span>
+          <span className="text-sm text-zinc-500 ml-2">/ {styleTotal}</span>
         </div>
       </div>
 
@@ -404,21 +482,23 @@ function ConfigureView({ config, blocks, setBlocks, onBack, onStart }) {
     newBlocks[idx] = { ...current, type: current.type === 'B' ? 'A' : 'B' };
     setBlocks(newBlocks);
   };
-  const previewSlots = expandBlocksToSlots(blocks);
+  const previewSlots = expandBlocksToSlots(blocks, config);
   const altCount = blocks.filter(b => b.type === 'A').length;
+  const isAsym = config.style === 'asymmetric';
+  const intervalDisplay = isAsym ? `${config.intervalSec}s + ${config.extendedSec}s` : `${config.intervalSec}s`;
 
   return (
     <>
       <BackButton onClick={onBack} label="Back to browse" />
       <div className="border-b border-zinc-800 pb-6 mb-6">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-amber-400 mb-2">
-          Configure Session · CFG-{config.id}
+        <div className={`text-[10px] font-mono uppercase tracking-widest mb-2 ${isAsym ? 'text-fuchsia-400' : 'text-amber-400'}`}>
+          Configure Session · CFG-{config.id}{isAsym && ' · ASYMMETRIC'}
         </div>
         <h1 className="text-2xl font-bold tracking-tight text-zinc-100">
-          {config.duration} min · {config.intervalSec}s · {config.slots} × {config.sets}
+          {config.duration} min · {intervalDisplay} · {config.slots} × {config.sets}
         </h1>
         <div className="text-sm text-zinc-400 mt-2">
-          {describeMix(config.bilateral, config.unilateral)} · cycle {formatCycle(config.cycleSec)} · {config.totalSets} total sets
+          {describeMix(config.bilateral, config.unilateral)}{isAsym && ' (combined)'} · cycle {formatCycle(config.cycleSec)} · {config.totalSets} total sets
         </div>
       </div>
 
@@ -448,12 +528,20 @@ function ConfigureView({ config, blocks, setBlocks, onBack, onStart }) {
         </div>
         <div className="flex flex-wrap gap-1 mb-3">
           {previewSlots.map((slot, idx) => {
-            const style = slot.alternating
+            const style = slot.combined
+              ? 'border-fuchsia-800 bg-fuchsia-950 text-fuchsia-300'
+              : slot.alternating
               ? 'border-cyan-800 bg-cyan-950 text-cyan-300'
               : slot.side
               ? 'border-amber-800 bg-amber-950 text-amber-300'
               : 'border-zinc-700 bg-zinc-800 text-zinc-200';
-            const suffix = slot.alternating ? ' (alt L/R)' : slot.side ? ` (${slot.side[0]})` : '';
+            const suffix = slot.combined
+              ? ` (L+R · ${slot.duration}s)`
+              : slot.alternating
+              ? ' (alt L/R)'
+              : slot.side
+              ? ` (${slot.side[0]})`
+              : '';
             return (
               <div key={idx} className={`px-2 py-1 text-xs font-mono border ${style}`}>
                 {slot.name}{suffix}
@@ -469,7 +557,9 @@ function ConfigureView({ config, blocks, setBlocks, onBack, onStart }) {
 
       <button
         onClick={onStart}
-        className="w-full py-4 bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold uppercase tracking-widest text-sm transition-colors"
+        className={`w-full py-4 text-zinc-950 font-bold uppercase tracking-widest text-sm transition-colors ${
+          isAsym ? 'bg-fuchsia-400 hover:bg-fuchsia-300' : 'bg-amber-400 hover:bg-amber-300'
+        }`}
       >
         Start Workout →
       </button>
@@ -481,21 +571,27 @@ function ConfigureView({ config, blocks, setBlocks, onBack, onStart }) {
 // TIMER VIEW
 // =============================================================================
 function TimerView({ config, blocks, onBack }) {
-  const slots = useMemo(() => expandBlocksToSlots(blocks), [blocks]);
+  const slots = useMemo(() => expandBlocksToSlots(blocks, config), [blocks, config]);
   const totalSlots = slots.length * config.sets;
+  const isAsym = config.style === 'asymmetric';
+  const accent = isAsym ? 'fuchsia' : 'amber';
 
   const [currentIdx, setCurrentIdx] = useState(0);
-  const [secondsLeft, setSecondsLeft] = useState(config.intervalSec);
+  const [secondsLeft, setSecondsLeft] = useState(() => slots[0]?.duration ?? config.intervalSec);
   const [running, setRunning] = useState(false);
   const [preCount, setPreCount] = useState(null);
   const [audioOn, setAudioOn] = useState(true);
   const prevIdxRef = useRef(0);
+  const midCueFiredRef = useRef(false);
 
   const isComplete = currentIdx >= totalSlots;
   const currentSlot = !isComplete ? slots[currentIdx % slots.length] : null;
   const nextSlot = currentIdx + 1 < totalSlots ? slots[(currentIdx + 1) % slots.length] : null;
   const currentSet = isComplete ? config.sets : Math.floor(currentIdx / slots.length) + 1;
   const slotInRound = isComplete ? slots.length : (currentIdx % slots.length) + 1;
+  const currentIsCombined = !!currentSlot?.combined;
+  const halfwayMark = currentSlot ? Math.ceil(currentSlot.duration / 2) : 0;
+  const pastHalfway = currentIsCombined && secondsLeft <= halfwayMark;
 
   // Pre-countdown
   useEffect(() => {
@@ -520,18 +616,27 @@ function TimerView({ config, blocks, onBack }) {
       setRunning(false);
       return;
     }
+    const slot = slots[currentIdx % slots.length];
+    const halfway = slot.combined ? Math.ceil(slot.duration / 2) : null;
     const tick = setInterval(() => {
       setSecondsLeft(prev => {
         if (prev > 1) {
           if (prev === 4 && audioOn) playBeep(660, 0.08, 0.2);
+          if (slot.combined && !midCueFiredRef.current && prev === halfway && audioOn) {
+            playBeep(550, 0.22, 0.4);
+            midCueFiredRef.current = true;
+          }
           return prev - 1;
         }
-        setCurrentIdx(i => i + 1);
-        return config.intervalSec;
+        const newIdx = currentIdx + 1;
+        setCurrentIdx(newIdx);
+        midCueFiredRef.current = false;
+        if (newIdx >= totalSlots) return 0;
+        return slots[newIdx % slots.length].duration;
       });
     }, 1000);
     return () => clearInterval(tick);
-  }, [running, currentIdx, totalSlots, config.intervalSec, audioOn]);
+  }, [running, currentIdx, totalSlots, slots, audioOn]);
 
   // Beep on transition
   useEffect(() => {
@@ -564,8 +669,9 @@ function TimerView({ config, blocks, onBack }) {
   const start = () => {
     if (isComplete) {
       setCurrentIdx(0);
-      setSecondsLeft(config.intervalSec);
+      setSecondsLeft(slots[0].duration);
       prevIdxRef.current = 0;
+      midCueFiredRef.current = false;
     }
     setPreCount(3);
   };
@@ -575,13 +681,20 @@ function TimerView({ config, blocks, onBack }) {
     setRunning(false);
     setPreCount(null);
     setCurrentIdx(0);
-    setSecondsLeft(config.intervalSec);
+    setSecondsLeft(slots[0].duration);
     prevIdxRef.current = 0;
+    midCueFiredRef.current = false;
   };
   const skip = () => {
     if (isComplete) return;
-    setCurrentIdx(i => i + 1);
-    setSecondsLeft(config.intervalSec);
+    const newIdx = currentIdx + 1;
+    setCurrentIdx(newIdx);
+    midCueFiredRef.current = false;
+    if (newIdx >= totalSlots) {
+      setSecondsLeft(0);
+    } else {
+      setSecondsLeft(slots[newIdx % slots.length].duration);
+    }
   };
 
   const progressPct = (currentIdx / totalSlots) * 100;
@@ -594,11 +707,11 @@ function TimerView({ config, blocks, onBack }) {
       <BackButton onClick={onBack} label="Back to configure" />
 
       <div className="mb-6">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-amber-400 mb-1">
-          Live Session · CFG-{config.id}
+        <div className={`text-[10px] font-mono uppercase tracking-widest mb-1 ${isAsym ? 'text-fuchsia-400' : 'text-amber-400'}`}>
+          Live Session · CFG-{config.id}{isAsym && ' · ASYM'}
         </div>
         <div className="text-xs text-zinc-500 font-mono">
-          {config.duration} min · {config.intervalSec}s · {config.slots}×{config.sets}
+          {config.duration} min · {isAsym ? `${config.intervalSec}s+${config.extendedSec}s` : `${config.intervalSec}s`} · {config.slots}×{config.sets}
         </div>
       </div>
 
@@ -642,8 +755,15 @@ function TimerView({ config, blocks, onBack }) {
                 Alternate L / R
               </div>
             )}
+            {currentSlot.combined && (
+              <div className="text-xl font-mono text-fuchsia-400 uppercase tracking-wider mt-1">
+                {pastHalfway ? <span>Right side <span className="text-zinc-500">· L done</span></span> : <span><span className="text-zinc-500">Left first ·</span> switch at {halfwayMark}s</span>}
+              </div>
+            )}
             <div className="mt-6 flex items-baseline gap-3">
-              <div className="text-7xl sm:text-8xl font-mono font-bold text-amber-400 tabular-nums">
+              <div className={`text-7xl sm:text-8xl font-mono font-bold tabular-nums ${
+                currentSlot.combined ? 'text-fuchsia-400' : currentSlot.alternating ? 'text-cyan-400' : 'text-amber-400'
+              }`}>
                 {secondsLeft}
               </div>
               <div className="text-sm font-mono uppercase tracking-widest text-zinc-500">sec</div>
@@ -657,6 +777,7 @@ function TimerView({ config, blocks, onBack }) {
                 {nextSlot.name}
                 {nextSlot.side && <span className="text-amber-400/80 ml-2">({nextSlot.side})</span>}
                 {nextSlot.alternating && <span className="text-cyan-400/80 ml-2">(alt L/R)</span>}
+                {nextSlot.combined && <span className="text-fuchsia-400/80 ml-2">(L+R · {nextSlot.duration}s)</span>}
               </div>
             </div>
           )}
@@ -678,7 +799,7 @@ function TimerView({ config, blocks, onBack }) {
             </div>
             <div className="h-2 bg-zinc-900 border border-zinc-800 overflow-hidden">
               <div
-                className="h-full bg-amber-400 transition-all duration-300"
+                className={`h-full transition-all duration-300 ${isAsym ? 'bg-fuchsia-400' : 'bg-amber-400'}`}
                 style={{ width: `${progressPct}%` }}
               />
             </div>
@@ -691,7 +812,9 @@ function TimerView({ config, blocks, onBack }) {
           {!running && !isComplete && (
             <button
               onClick={hasStarted ? resume : start}
-              className="col-span-2 py-4 bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold uppercase tracking-widest text-sm transition-colors"
+              className={`col-span-2 py-4 text-zinc-950 font-bold uppercase tracking-widest text-sm transition-colors ${
+                isAsym ? 'bg-fuchsia-400 hover:bg-fuchsia-300' : 'bg-amber-400 hover:bg-amber-300'
+              }`}
             >
               {hasStarted ? 'Resume' : 'Start Workout'}
             </button>
@@ -707,7 +830,9 @@ function TimerView({ config, blocks, onBack }) {
           {isComplete && (
             <button
               onClick={start}
-              className="col-span-2 py-4 bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold uppercase tracking-widest text-sm transition-colors"
+              className={`col-span-2 py-4 text-zinc-950 font-bold uppercase tracking-widest text-sm transition-colors ${
+                isAsym ? 'bg-fuchsia-400 hover:bg-fuchsia-300' : 'bg-amber-400 hover:bg-amber-300'
+              }`}
             >
               Run Again
             </button>
