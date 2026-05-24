@@ -307,32 +307,65 @@ function blip({ freq = 1000, decay = 0.12, gain = 0.4, delay = 0, wave = 'sine' 
   osc.start(now); osc.stop(now + decay + 0.02);
 }
 
+// LOUD beep — flat-top square wave. Two oscillators layered (square + saw) for
+// extra harmonic content. Soft-clipped through a waveshaper so the signal stays
+// at perceived max volume without clipping artefacts.
+let _shaper = null;
+function getShaper() {
+  const ctx = getCtx(); if (!ctx) return null;
+  if (_shaper && _shaper.context === ctx) return _shaper;
+  const ws = ctx.createWaveShaper();
+  const n = 1024;
+  const curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    curve[i] = Math.tanh(x * 2.5);
+  }
+  ws.curve = curve;
+  ws.oversample = '4x';
+  _shaper = ws;
+  return ws;
+}
+function beep({ freq = 1000, duration = 0.18, gain = 0.85, delay = 0 }) {
+  const ctx = getCtx(); if (!ctx) return;
+  const now = ctx.currentTime + delay;
+  const sq = ctx.createOscillator(); sq.type = 'square'; sq.frequency.value = freq;
+  const sw = ctx.createOscillator(); sw.type = 'sawtooth'; sw.frequency.value = freq;
+  const mix = ctx.createGain();
+  mix.gain.value = 0.7;
+  sq.connect(mix); sw.connect(mix);
+  const ws = getShaper();
+  const env = ctx.createGain();
+  env.gain.setValueAtTime(0, now);
+  env.gain.linearRampToValueAtTime(gain, now + 0.003);
+  env.gain.setValueAtTime(gain, now + duration - 0.012);
+  env.gain.linearRampToValueAtTime(0, now + duration);
+  mix.connect(ws); ws.connect(env); env.connect(ctx.destination);
+  sq.start(now); sw.start(now);
+  sq.stop(now + duration + 0.02); sw.stop(now + duration + 0.02);
+}
+
 const cues = {
-  // Soft woodblock click during countdown — ascending mid-band frequencies
+  // LOUD 3-2-1 countdown beeps — square+saw, soft-clipped, full attack/sustain
   preTick(n) {
-    const freq = { 3: 700, 2: 900, 1: 1150 }[n] ?? 700;
-    crack({ freq, q: 6, decay: 0.06, gain: 0.45 });
+    beep({ freq: 1175, duration: 0.18, gain: 0.95 });
   },
-  // Round start — real boxing bell sample (with synth thump for body)
+  // Round start — real boxing bell sample (synth fallback)
   go() {
-    if (!playSample('go', { gain: 0.95 })) {
-      thump({ start: 160, end: 55, decay: 0.22, gain: 0.7 });
-      crack({ freq: 3500, q: 1.2, decay: 0.14, gain: 0.55 });
-      blip({ freq: 660, decay: 0.18, gain: 0.35, delay: 0.005 });
-      blip({ freq: 990, decay: 0.18, gain: 0.28, delay: 0.005 });
+    if (!playSample('go', { gain: 1.4 })) {
+      thump({ start: 160, end: 55, decay: 0.22, gain: 0.8 });
+      beep({ freq: 880, duration: 0.4, gain: 1.0 });
     }
   },
-  // Heads-up at T-10 — soft double-blip "doot doot"
+  // 10s heads-up — single LOWER-pitched longer buzzer. Unmistakable.
   warning10sec() {
-    blip({ freq: 1200, decay: 0.12, gain: 0.4 });
-    blip({ freq: 1500, decay: 0.12, gain: 0.35, delay: 0.12 });
+    beep({ freq: 520, duration: 0.5, gain: 0.95 });
   },
-  // Slot change — boxing bell sample (the "round bell" at every interval)
+  // Slot change — boxing bell sample at high gain
   transition() {
-    if (!playSample('go', { gain: 0.95 })) {
-      thump({ start: 160, end: 55, decay: 0.22, gain: 0.6 });
-      crack({ freq: 3500, q: 1.2, decay: 0.14, gain: 0.5 });
-      blip({ freq: 660, decay: 0.18, gain: 0.3, delay: 0.005 });
+    if (!playSample('go', { gain: 1.4 })) {
+      thump({ start: 160, end: 55, decay: 0.22, gain: 0.7 });
+      beep({ freq: 880, duration: 0.35, gain: 0.95 });
     }
   },
   // Halfway switch — end-of-round bell sample played slightly faster for a
