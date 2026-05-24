@@ -205,59 +205,115 @@ function getCtx() {
   if (_ctx?.state === 'suspended') _ctx.resume();
   return _ctx;
 }
-function bell({ carrier = 880, modRatio = 1.5, modAmount = 600, modDecay = 0.25, ampDecay = 0.7, gain = 0.55, delay = 0 }) {
-  const ctx = getCtx(); if (!ctx) return;
-  const now = ctx.currentTime + delay;
-  const mod = ctx.createOscillator(); mod.type = 'sine'; mod.frequency.value = carrier * modRatio;
-  const modGain = ctx.createGain();
-  modGain.gain.setValueAtTime(modAmount, now);
-  modGain.gain.exponentialRampToValueAtTime(0.001, now + modDecay);
-  const car = ctx.createOscillator(); car.type = 'sine'; car.frequency.value = carrier;
-  const env = ctx.createGain();
-  env.gain.setValueAtTime(0, now);
-  env.gain.linearRampToValueAtTime(gain, now + 0.005);
-  env.gain.exponentialRampToValueAtTime(0.001, now + ampDecay);
-  const filt = ctx.createBiquadFilter(); filt.type = 'highshelf'; filt.frequency.value = 4000; filt.gain.value = 4;
-  mod.connect(modGain); modGain.connect(car.frequency);
-  car.connect(env); env.connect(filt); filt.connect(ctx.destination);
-  mod.start(now); car.start(now);
-  mod.stop(now + ampDecay + 0.05); car.stop(now + ampDecay + 0.05);
+// --- Sound primitives: percussive athletic palette ---
+
+// Cached white-noise buffer
+let _noiseBuf = null;
+function noiseBuffer(ctx) {
+  if (_noiseBuf && _noiseBuf.sampleRate === ctx.sampleRate) return _noiseBuf;
+  const len = Math.floor(ctx.sampleRate * 0.5);
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+  _noiseBuf = buf;
+  return buf;
 }
-function tone({ freq = 1800, decay = 0.06, gain = 0.4, delay = 0 } = {}) {
+
+// Filtered noise burst — snare-crack / hi-hat / woodblock texture depending on freq+Q
+function crack({ freq = 2000, q = 4, decay = 0.08, gain = 0.4, attack = 0.001, type = 'bandpass', delay = 0 }) {
   const ctx = getCtx(); if (!ctx) return;
   const now = ctx.currentTime + delay;
-  const osc = ctx.createOscillator(); osc.type = 'triangle';
-  osc.frequency.setValueAtTime(freq, now);
-  osc.frequency.exponentialRampToValueAtTime(freq * 0.55, now + decay);
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuffer(ctx);
+  const filt = ctx.createBiquadFilter();
+  filt.type = type;
+  filt.frequency.value = freq;
+  filt.Q.value = q;
   const env = ctx.createGain();
   env.gain.setValueAtTime(0, now);
-  env.gain.linearRampToValueAtTime(gain, now + 0.001);
+  env.gain.linearRampToValueAtTime(gain, now + attack);
+  env.gain.exponentialRampToValueAtTime(0.001, now + decay);
+  src.connect(filt); filt.connect(env); env.connect(ctx.destination);
+  src.start(now); src.stop(now + decay + 0.05);
+}
+
+// Low-frequency thump — kick-drum body
+function thump({ start = 140, end = 50, decay = 0.18, gain = 0.55, delay = 0 }) {
+  const ctx = getCtx(); if (!ctx) return;
+  const now = ctx.currentTime + delay;
+  const osc = ctx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(start, now);
+  osc.frequency.exponentialRampToValueAtTime(end, now + decay);
+  const env = ctx.createGain();
+  env.gain.setValueAtTime(0, now);
+  env.gain.linearRampToValueAtTime(gain, now + 0.003);
   env.gain.exponentialRampToValueAtTime(0.001, now + decay);
   osc.connect(env); env.connect(ctx.destination);
   osc.start(now); osc.stop(now + decay + 0.02);
 }
+
+// Clean tonal pulse — sine with very short attack
+function blip({ freq = 1000, decay = 0.12, gain = 0.4, delay = 0, wave = 'sine' }) {
+  const ctx = getCtx(); if (!ctx) return;
+  const now = ctx.currentTime + delay;
+  const osc = ctx.createOscillator();
+  osc.type = wave;
+  osc.frequency.value = freq;
+  const env = ctx.createGain();
+  env.gain.setValueAtTime(0, now);
+  env.gain.linearRampToValueAtTime(gain, now + 0.002);
+  env.gain.exponentialRampToValueAtTime(0.001, now + decay);
+  osc.connect(env); env.connect(ctx.destination);
+  osc.start(now); osc.stop(now + decay + 0.02);
+}
+
 const cues = {
-  preTick(n) { bell({ carrier: { 3: 660, 2: 784, 1: 932 }[n] ?? 660, modRatio: 2, modAmount: 200, modDecay: 0.12, ampDecay: 0.25, gain: 0.55 }); },
+  // Soft woodblock click during countdown — ascending mid-band frequencies
+  preTick(n) {
+    const freq = { 3: 700, 2: 900, 1: 1150 }[n] ?? 700;
+    crack({ freq, q: 6, decay: 0.06, gain: 0.45 });
+  },
+  // Punchy round start — kick thump + bright crack + tonal confirmation
   go() {
-    bell({ carrier: 880, modRatio: 2, modAmount: 700, modDecay: 0.18, ampDecay: 0.55, gain: 0.6 });
-    bell({ carrier: 1320, modRatio: 2, modAmount: 700, modDecay: 0.18, ampDecay: 0.55, gain: 0.45 });
+    thump({ start: 160, end: 55, decay: 0.22, gain: 0.7 });
+    crack({ freq: 3500, q: 1.2, decay: 0.14, gain: 0.55 });
+    blip({ freq: 660, decay: 0.18, gain: 0.35, delay: 0.005 });
+    blip({ freq: 990, decay: 0.18, gain: 0.28, delay: 0.005 });
   },
-  warning3sec() { tone({ freq: 2200, decay: 0.07, gain: 0.48 }); },
+  // Sharp warning at T-3 — short rim-shot tick (no tonal ring)
+  warning3sec() {
+    crack({ freq: 4500, q: 2.5, decay: 0.05, gain: 0.55 });
+  },
+  // Slot change — snare-style crack + brief bell remnant
   transition() {
-    bell({ carrier: 1175, modRatio: 1.5, modAmount: 600, modDecay: 0.22, ampDecay: 0.65, gain: 0.62 });
-    bell({ carrier: 1568, modRatio: 1.5, modAmount: 500, modDecay: 0.18, ampDecay: 0.5, gain: 0.42, delay: 0.06 });
+    crack({ freq: 2800, q: 1.4, decay: 0.12, gain: 0.55 });
+    blip({ freq: 1320, decay: 0.18, gain: 0.32, delay: 0.01 });
   },
+  // Halfway switch — descending sweep, distinct from transition
   halfway() {
-    bell({ carrier: 988, modRatio: 1, modAmount: 400, modDecay: 0.3, ampDecay: 0.7, gain: 0.58 });
-    bell({ carrier: 1318, modRatio: 1, modAmount: 300, modDecay: 0.25, ampDecay: 0.6, gain: 0.42, delay: 0.04 });
+    crack({ freq: 1600, q: 1.0, decay: 0.16, gain: 0.45 });
+    blip({ freq: 880, decay: 0.22, gain: 0.4, delay: 0.02 });
+    blip({ freq: 660, decay: 0.28, gain: 0.3, delay: 0.08 });
   },
+  // Entering rest — warm low pad, low intensity
   enterRest() {
-    bell({ carrier: 523, modRatio: 1, modAmount: 240, modDecay: 0.5, ampDecay: 0.9, gain: 0.42 });
+    crack({ freq: 600, q: 0.8, decay: 0.3, gain: 0.35, type: 'lowpass' });
+    blip({ freq: 330, decay: 0.4, gain: 0.3, delay: 0.02 });
   },
+  // Session complete — two-hit rhythmic chord + kick
   complete() {
-    bell({ carrier: 1568, modRatio: 2, modAmount: 500, modDecay: 0.3, ampDecay: 0.9, gain: 0.52, delay: 0 });
-    bell({ carrier: 1318, modRatio: 2, modAmount: 500, modDecay: 0.3, ampDecay: 0.9, gain: 0.52, delay: 0.18 });
-    bell({ carrier: 1047, modRatio: 2, modAmount: 500, modDecay: 0.35, ampDecay: 1.1, gain: 0.6, delay: 0.36 });
+    thump({ start: 140, end: 50, decay: 0.25, gain: 0.6 });
+    crack({ freq: 3500, q: 1.2, decay: 0.15, gain: 0.5 });
+    blip({ freq: 523, decay: 0.4, gain: 0.32 });
+    blip({ freq: 659, decay: 0.4, gain: 0.32 });
+    blip({ freq: 784, decay: 0.5, gain: 0.32 });
+    // second hit
+    thump({ start: 160, end: 60, decay: 0.3, gain: 0.65, delay: 0.3 });
+    crack({ freq: 3500, q: 1.2, decay: 0.18, gain: 0.55, delay: 0.3 });
+    blip({ freq: 523, decay: 0.5, gain: 0.32, delay: 0.3 });
+    blip({ freq: 659, decay: 0.5, gain: 0.32, delay: 0.3 });
+    blip({ freq: 988, decay: 0.6, gain: 0.36, delay: 0.3 });
   },
 };
 
