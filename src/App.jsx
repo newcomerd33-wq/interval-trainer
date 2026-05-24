@@ -322,15 +322,18 @@ const cues = {
       blip({ freq: 990, decay: 0.18, gain: 0.28, delay: 0.005 });
     }
   },
-  // Sharp warning at T-3 — short rim-shot tick (no tonal ring)
-  warning3sec() {
-    crack({ freq: 4500, q: 2.5, decay: 0.05, gain: 0.55 });
+  // Heads-up at T-10 — soft double-blip "doot doot"
+  warning10sec() {
+    blip({ freq: 1200, decay: 0.12, gain: 0.4 });
+    blip({ freq: 1500, decay: 0.12, gain: 0.35, delay: 0.12 });
   },
-  // Slot change — snare-style crack + brief bell remnant. Kept synth: plays many
-  // times per session, so a short, distinct, NON-bell hit is the right vibe.
+  // Slot change — boxing bell sample (the "round bell" at every interval)
   transition() {
-    crack({ freq: 2800, q: 1.4, decay: 0.12, gain: 0.55 });
-    blip({ freq: 1320, decay: 0.18, gain: 0.32, delay: 0.01 });
+    if (!playSample('go', { gain: 0.95 })) {
+      thump({ start: 160, end: 55, decay: 0.22, gain: 0.6 });
+      crack({ freq: 3500, q: 1.2, decay: 0.14, gain: 0.5 });
+      blip({ freq: 660, decay: 0.18, gain: 0.3, delay: 0.005 });
+    }
   },
   // Halfway switch — end-of-round bell sample played slightly faster for a
   // distinct mid-set ping. Falls back to synth descending sweep.
@@ -1148,7 +1151,12 @@ function TimerView({ session, onBack }) {
     const tick = setInterval(() => {
       setSecondsLeft(prev => {
         if (prev > 1) {
-          if (prev === 4 && audioOn) cues.warning3sec();
+          if (audioOn && !slot.isRest) {
+            if (prev === 11) cues.warning10sec();
+            if (prev === 4) cues.preTick(3);
+            if (prev === 3) cues.preTick(2);
+            if (prev === 2) cues.preTick(1);
+          }
           if (slot.combined && !midRef.current && prev === half && audioOn) {
             cues.halfway();
             midRef.current = true;
