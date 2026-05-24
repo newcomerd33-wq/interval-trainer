@@ -332,13 +332,38 @@ function Stepper({ value, min = 5, max = 600, step = 5, onChange }) {
   );
 }
 
+function useKeyboardOffset(active) {
+  const [offset, setOffset] = useState(0);
+  useEffect(() => {
+    if (!active) { setOffset(0); return; }
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => {
+      const k = window.innerHeight - vv.height - vv.offsetTop;
+      setOffset(Math.max(0, k));
+    };
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    update();
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+    };
+  }, [active]);
+  return offset;
+}
+
 function Sheet({ open, onClose, title, children, primaryLabel = 'Done', onPrimary }) {
+  const kb = useKeyboardOffset(open);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60 fadeIn" />
-      <div className="relative w-full max-w-[440px] mx-auto bg-[var(--color-grouped-bg)] rounded-t-2xl pb-[max(env(safe-area-inset-bottom),16px)] slideIn"
-        onClick={e => e.stopPropagation()}>
+      <div
+        className="relative w-full max-w-[440px] mx-auto bg-[var(--color-grouped-bg)] rounded-t-2xl pb-[max(env(safe-area-inset-bottom),16px)] slideIn"
+        style={{ transform: kb > 0 ? `translateY(-${kb}px)` : undefined, transition: 'transform 0.18s ease-out' }}
+        onClick={e => e.stopPropagation()}
+      >
         <div className="h-11 flex items-center px-4 border-b border-[var(--color-sep)]">
           <button type="button" onClick={onClose} className="press text-[17px] text-[var(--color-accent)] -ml-1 px-1 h-11">Cancel</button>
           <div className="flex-1 text-center text-[17px] font-semibold">{title}</div>
