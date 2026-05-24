@@ -1,32 +1,33 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import {
+  ChevronLeft, ChevronRight, ChevronUp, ChevronDown,
+  Play, Pause, RotateCcw, SkipForward,
+  Volume2, VolumeX, Check, Filter, X,
+  Dumbbell, Repeat, Activity,
+} from 'lucide-react';
 
 // =============================================================================
-// DATA: Valid (duration, interval, slots-per-round, rounds) templates
+// DATA: uniform + asymmetric configs
 // =============================================================================
-const TEMPLATES = [
-  // 45s base
+const UNIFORM_TEMPLATES = [
   [15, 45, 2, 10], [15, 45, 4, 5], [15, 45, 5, 4],
   [30, 45, 4, 10], [30, 45, 5, 8], [30, 45, 8, 5],
   [45, 45, 4, 15], [45, 45, 5, 12], [45, 45, 6, 10],
   [60, 45, 8, 10],
-  // 60s base
   [15, 60, 3, 5], [15, 60, 5, 3],
   [20, 60, 2, 10], [20, 60, 4, 5], [20, 60, 5, 4],
   [30, 60, 2, 15], [30, 60, 3, 10], [30, 60, 5, 6], [30, 60, 6, 5],
   [45, 60, 3, 15], [45, 60, 5, 9],
   [60, 60, 4, 15], [60, 60, 5, 12], [60, 60, 6, 10],
-  // 75s base
   [15, 75, 2, 6], [15, 75, 3, 4], [15, 75, 4, 3],
   [20, 75, 2, 8], [20, 75, 4, 4],
   [30, 75, 2, 12], [30, 75, 3, 8], [30, 75, 4, 6], [30, 75, 6, 4], [30, 75, 8, 3],
   [45, 75, 3, 12], [45, 75, 4, 9], [45, 75, 6, 6],
   [60, 75, 4, 12], [60, 75, 6, 8], [60, 75, 8, 6],
-  // 90s base
   [15, 90, 2, 5],
   [30, 90, 2, 10], [30, 90, 4, 5], [30, 90, 5, 4],
   [45, 90, 2, 15], [45, 90, 3, 10], [45, 90, 5, 6], [45, 90, 6, 5],
   [60, 90, 4, 10], [60, 90, 5, 8], [60, 90, 8, 5],
-  // 120s base
   [20, 120, 2, 5],
   [30, 120, 3, 5], [30, 120, 5, 3],
   [60, 120, 2, 15], [60, 120, 3, 10], [60, 120, 5, 6], [60, 120, 6, 5],
@@ -40,20 +41,19 @@ function generateMixes(slots) {
   return mixes;
 }
 
-const UNIFORM_CONFIGS = TEMPLATES.flatMap(([duration, intervalSec, slots, sets], tIdx) =>
+const UNIFORM_CONFIGS = UNIFORM_TEMPLATES.flatMap(([duration, intervalSec, slots, sets], tIdx) =>
   generateMixes(slots).map(({ b, u }, mIdx) => ({
     id: `U-${String(tIdx).padStart(2, '0')}${mIdx}`,
     style: 'uniform',
     duration, intervalSec, extendedSec: null, sets,
     bilateral: b, unilateral: u,
     totalEx: b + u,
-    slots,                            // slot count per round = b + 2u
+    slots,
     cycleSec: slots * intervalSec,
     totalSets: (b + u) * sets,
   }))
 );
 
-// Asymmetric configs use intervalSec for bilateral slots and intervalSec+30 for combined-unilateral slots.
 function generateAsymmetricConfigs() {
   const durations = [15, 20, 30, 45, 60];
   const bases = [45, 60, 75, 90, 120];
@@ -75,7 +75,7 @@ function generateAsymmetricConfigs() {
             duration, intervalSec, extendedSec, sets: rounds,
             bilateral: b, unilateral: u,
             totalEx: b + u,
-            slots: b + u,             // each U is ONE slot (just longer)
+            slots: b + u,
             cycleSec: cycle,
             totalSets: (b + u) * rounds,
           });
@@ -86,23 +86,23 @@ function generateAsymmetricConfigs() {
   return out;
 }
 
-const ASYMMETRIC_CONFIGS = generateAsymmetricConfigs();
-const CONFIGS = [...UNIFORM_CONFIGS, ...ASYMMETRIC_CONFIGS];
+const CONFIGS = [...UNIFORM_CONFIGS, ...generateAsymmetricConfigs()];
 
 // =============================================================================
 // HELPERS
 // =============================================================================
-function formatCycle(seconds) {
+function formatTime(seconds) {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function describeMix(b, u) {
+function describeMix(b, u, isAsym) {
   if (b === 0 && u === 0) return '';
-  if (b === 0) return `${u} unilateral`;
-  if (u === 0) return `${b} bilateral`;
-  return `${b} bilateral + ${u} unilateral`;
+  const parts = [];
+  if (b > 0) parts.push(`${b} bilateral`);
+  if (u > 0) parts.push(`${u} ${isAsym ? 'combined' : 'unilateral'}`);
+  return parts.join(' + ');
 }
 
 function generateInitialBlocks(bilateral, unilateral) {
@@ -130,55 +130,225 @@ function expandBlocksToSlots(blocks, config) {
     } else if (isAsym) {
       slots.push({ name: block.name, side: null, combined: true, duration: extDur });
     } else {
-      slots.push({ name: block.name, side: 'Left', duration: baseDur });
-      slots.push({ name: block.name, side: 'Right', duration: baseDur });
+      slots.push({ name: block.name, side: 'L', duration: baseDur });
+      slots.push({ name: block.name, side: 'R', duration: baseDur });
     }
   }
   return slots;
 }
 
 // =============================================================================
-// AUDIO (single shared context, beeps on demand)
+// AUDIO — richer cues that cut through music
 // =============================================================================
-let _audioCtx = null;
-function getAudioCtx() {
-  if (!_audioCtx) {
+let _ctx = null;
+function getCtx() {
+  if (typeof window === 'undefined') return null;
+  if (!_ctx) {
     const AC = window.AudioContext || window.webkitAudioContext;
-    if (AC) _audioCtx = new AC();
+    if (AC) _ctx = new AC();
   }
-  return _audioCtx;
+  if (_ctx && _ctx.state === 'suspended') _ctx.resume();
+  return _ctx;
 }
-function playBeep(frequency = 800, duration = 0.15, gain = 0.3) {
-  try {
-    const ctx = getAudioCtx();
-    if (!ctx) return;
-    if (ctx.state === 'suspended') ctx.resume();
-    const osc = ctx.createOscillator();
-    const g = ctx.createGain();
-    osc.connect(g);
-    g.connect(ctx.destination);
-    osc.frequency.value = frequency;
-    osc.type = 'sine';
-    g.gain.setValueAtTime(gain, ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + duration);
-  } catch (e) { /* silent */ }
+
+// FM-synth bell: warm, percussive, cuts through ambient noise
+function bell({ carrier = 880, modRatio = 1.5, modAmount = 600, modDecay = 0.25, ampDecay = 0.7, gain = 0.5, delay = 0 }) {
+  const ctx = getCtx();
+  if (!ctx) return;
+  const now = ctx.currentTime + delay;
+
+  const mod = ctx.createOscillator();
+  mod.type = 'sine';
+  mod.frequency.value = carrier * modRatio;
+
+  const modGain = ctx.createGain();
+  modGain.gain.setValueAtTime(modAmount, now);
+  modGain.gain.exponentialRampToValueAtTime(0.001, now + modDecay);
+
+  const car = ctx.createOscillator();
+  car.type = 'sine';
+  car.frequency.value = carrier;
+
+  const env = ctx.createGain();
+  env.gain.setValueAtTime(0, now);
+  env.gain.linearRampToValueAtTime(gain, now + 0.004);
+  env.gain.exponentialRampToValueAtTime(0.001, now + ampDecay);
+
+  // light high-shelf brightness via biquad
+  const filt = ctx.createBiquadFilter();
+  filt.type = 'highshelf';
+  filt.frequency.value = 4000;
+  filt.gain.value = 4;
+
+  mod.connect(modGain);
+  modGain.connect(car.frequency);
+  car.connect(env);
+  env.connect(filt);
+  filt.connect(ctx.destination);
+
+  mod.start(now);
+  car.start(now);
+  mod.stop(now + ampDecay + 0.05);
+  car.stop(now + ampDecay + 0.05);
 }
+
+// Short percussive click for ticks
+function click({ freq = 1800, decay = 0.06, gain = 0.35, delay = 0 } = {}) {
+  const ctx = getCtx();
+  if (!ctx) return;
+  const now = ctx.currentTime + delay;
+  const osc = ctx.createOscillator();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(freq, now);
+  osc.frequency.exponentialRampToValueAtTime(freq * 0.5, now + decay);
+  const env = ctx.createGain();
+  env.gain.setValueAtTime(0, now);
+  env.gain.linearRampToValueAtTime(gain, now + 0.001);
+  env.gain.exponentialRampToValueAtTime(0.001, now + decay);
+  osc.connect(env);
+  env.connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + decay + 0.02);
+}
+
+// Cues
+const cue = {
+  preTick(n) {
+    // ascending pitch through the 3-2-1 countdown
+    const freqs = { 3: 660, 2: 784, 1: 932 };
+    bell({ carrier: freqs[n] || 660, modRatio: 2, modAmount: 200, modDecay: 0.12, ampDecay: 0.25, gain: 0.55 });
+  },
+  go() {
+    // bright two-note: tonic + fifth, simultaneous
+    bell({ carrier: 880, modRatio: 2, modAmount: 700, modDecay: 0.18, ampDecay: 0.55, gain: 0.55 });
+    bell({ carrier: 1320, modRatio: 2, modAmount: 700, modDecay: 0.18, ampDecay: 0.55, gain: 0.45 });
+  },
+  warning3sec() {
+    // sharp tick — heard above music
+    click({ freq: 2200, decay: 0.07, gain: 0.45 });
+  },
+  transition() {
+    // bell chime at slot change
+    bell({ carrier: 1175, modRatio: 1.5, modAmount: 600, modDecay: 0.22, ampDecay: 0.65, gain: 0.6 });
+    bell({ carrier: 1568, modRatio: 1.5, modAmount: 500, modDecay: 0.18, ampDecay: 0.5, gain: 0.4, delay: 0.06 });
+  },
+  halfway() {
+    // warm mid-cue — distinct from transition
+    bell({ carrier: 988, modRatio: 1, modAmount: 400, modDecay: 0.3, ampDecay: 0.7, gain: 0.55 });
+    bell({ carrier: 1318, modRatio: 1, modAmount: 300, modDecay: 0.25, ampDecay: 0.6, gain: 0.4, delay: 0.04 });
+  },
+  complete() {
+    // descending major triad
+    bell({ carrier: 1568, modRatio: 2, modAmount: 500, modDecay: 0.3, ampDecay: 0.9, gain: 0.5, delay: 0 });
+    bell({ carrier: 1318, modRatio: 2, modAmount: 500, modDecay: 0.3, ampDecay: 0.9, gain: 0.5, delay: 0.18 });
+    bell({ carrier: 1047, modRatio: 2, modAmount: 500, modDecay: 0.35, ampDecay: 1.1, gain: 0.6, delay: 0.36 });
+  },
+  tap() {
+    click({ freq: 2400, decay: 0.035, gain: 0.18 });
+  },
+};
 
 // =============================================================================
 // UI PRIMITIVES
 // =============================================================================
-function PillButton({ active, onClick, children, disabled }) {
+function Surface({ children, className = '', as: As = 'div', ...rest }) {
+  return (
+    <As
+      className={`bg-[var(--color-surface-1)] rounded-2xl ${className}`}
+      {...rest}
+    >
+      {children}
+    </As>
+  );
+}
+
+function Chip({ children, tone = 'neutral', className = '' }) {
+  const tones = {
+    neutral: 'bg-[var(--color-surface-3)] text-ink-1',
+    accent: 'bg-[var(--color-accent-glow)] text-[var(--color-accent)]',
+    asym: 'bg-[var(--color-asym-glow)] text-[var(--color-asym)]',
+    alt: 'bg-cyan-500/15 text-[var(--color-alt)]',
+    muted: 'bg-white/5 text-ink-3',
+  };
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium tracking-tight ${tones[tone]} ${className}`}>
+      {children}
+    </span>
+  );
+}
+
+function IconButton({ icon: Icon, onClick, label, disabled = false, className = '', tone = 'ghost' }) {
+  const tones = {
+    ghost: 'text-ink-2 hover:text-ink-1 active:bg-white/5',
+    surface: 'bg-[var(--color-surface-2)] text-ink-1 hover:bg-[var(--color-surface-3)]',
+  };
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`px-3 py-1.5 text-xs font-mono uppercase tracking-wider border transition-colors ${
-        disabled ? 'opacity-30 cursor-not-allowed border-zinc-800 text-zinc-600' :
+      aria-label={label}
+      className={`press inline-flex items-center justify-center h-10 w-10 rounded-full transition-colors disabled:opacity-30 ${tones[tone]} ${className}`}
+    >
+      <Icon size={18} strokeWidth={2.25} />
+    </button>
+  );
+}
+
+function PrimaryButton({ children, onClick, tone = 'accent', icon: Icon = null, className = '', disabled = false }) {
+  const styles = {
+    accent: 'bg-[var(--color-accent)] text-black shadow-[0_8px_24px_-8px_var(--color-accent-glow)]',
+    asym: 'bg-[var(--color-asym)] text-black shadow-[0_8px_24px_-8px_var(--color-asym-glow)]',
+    surface: 'bg-[var(--color-surface-2)] text-ink-1 border border-white/8',
+  };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`press w-full inline-flex items-center justify-center gap-2 rounded-2xl py-4 text-[15px] font-semibold tracking-tight transition-all disabled:opacity-40 ${styles[tone]} ${className}`}
+    >
+      {Icon && <Icon size={18} strokeWidth={2.5} />}
+      {children}
+    </button>
+  );
+}
+
+function Segment({ value, options, onChange, tone = 'accent' }) {
+  const activeColor = tone === 'asym' ? 'text-[var(--color-asym)]' : 'text-[var(--color-accent)]';
+  return (
+    <div className="relative grid bg-[var(--color-surface-2)] rounded-2xl p-1" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
+      {options.map(opt => {
+        const isActive = opt.value === value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => { if (!isActive) { cue.tap(); onChange(opt.value); } }}
+            className={`press relative z-10 py-2.5 text-[13px] font-semibold tracking-tight transition-colors ${
+              isActive ? `bg-[var(--color-surface-3)] rounded-xl ${activeColor}` : 'text-ink-2'
+            }`}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Pill({ active, onClick, children, tone = 'accent' }) {
+  const activeStyles = tone === 'asym'
+    ? 'bg-[var(--color-asym)] text-black'
+    : 'bg-[var(--color-accent)] text-black';
+  return (
+    <button
+      type="button"
+      onClick={() => { cue.tap(); onClick(); }}
+      className={`press inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold tracking-tight transition-colors ${
         active
-          ? 'bg-amber-400 text-zinc-950 border-amber-400'
-          : 'bg-transparent text-zinc-400 border-zinc-800 hover:border-zinc-600 hover:text-zinc-200'
+          ? activeStyles
+          : 'bg-[var(--color-surface-2)] text-ink-2 hover:text-ink-1'
       }`}
     >
       {children}
@@ -186,395 +356,514 @@ function PillButton({ active, onClick, children, disabled }) {
   );
 }
 
-function FilterGroup({ label, children }) {
-  return (
-    <div>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-2">{label}</div>
-      <div className="flex flex-wrap gap-1.5">{children}</div>
-    </div>
-  );
-}
-
-function Metric({ label, value }) {
-  return (
-    <div>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-1">{label}</div>
-      <div className="font-mono text-lg text-zinc-100">{value}</div>
-    </div>
-  );
-}
-
-function SlotStrip({ blocks, style }) {
-  const isAsym = style === 'asymmetric';
-  const slots = blocks.flatMap(block => {
-    if (block.type === 'B') return [{ t: 'B' }];
-    if (block.type === 'A') return [{ t: 'A' }];
-    if (isAsym) return [{ t: 'C' }];
-    return [{ t: 'L' }, { t: 'R' }];
-  });
-  const styleFor = (t) => {
-    if (t === 'B') return 'bg-zinc-800 text-zinc-200 border-zinc-700';
-    if (t === 'A') return 'bg-cyan-950 text-cyan-300 border-cyan-800';
-    if (t === 'C') return 'bg-fuchsia-950 text-fuchsia-300 border-fuchsia-800';
-    return 'bg-amber-950 text-amber-300 border-amber-800';
-  };
-  const widthFor = (t) => t === 'C' ? 'w-12' : 'w-7';
-  return (
-    <div className="flex gap-0.5 flex-wrap">
-      {slots.map((slot, idx) => (
-        <div
-          key={idx}
-          className={`${widthFor(slot.t)} h-7 flex items-center justify-center font-mono text-[10px] font-bold border ${styleFor(slot.t)}`}
-        >
-          {slot.t}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function BackButton({ onClick, label = 'Back' }) {
+function Switch({ checked, onChange }) {
   return (
     <button
-      onClick={onClick}
-      className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 hover:text-amber-400 transition-colors mb-4"
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={`press relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${
+        checked ? 'bg-[var(--color-accent)]' : 'bg-[var(--color-surface-3)]'
+      }`}
     >
-      ← {label}
+      <span
+        className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+          checked ? 'translate-x-6' : 'translate-x-1'
+        }`}
+      />
     </button>
+  );
+}
+
+function ScreenHeader({ eyebrow, title, right, tone = 'accent' }) {
+  const toneColor = tone === 'asym' ? 'text-[var(--color-asym)]' : 'text-[var(--color-accent)]';
+  return (
+    <div className="flex items-end justify-between gap-3 mb-6">
+      <div className="min-w-0">
+        {eyebrow && <div className={`text-[11px] font-semibold uppercase tracking-[0.14em] mb-2 ${toneColor}`}>{eyebrow}</div>}
+        <h1 className="text-[28px] sm:text-[32px] font-bold tracking-tight leading-[1.05] text-ink-0">{title}</h1>
+      </div>
+      {right && <div className="flex items-center gap-1.5 shrink-0">{right}</div>}
+    </div>
   );
 }
 
 // =============================================================================
 // BROWSE VIEW
 // =============================================================================
+function CompositionGraphic({ config }) {
+  // Render a visual rhythm of one round's slots
+  const isAsym = config.style === 'asymmetric';
+  const slots = [];
+  for (let i = 0; i < config.bilateral; i++) slots.push({ kind: 'B' });
+  for (let i = 0; i < config.unilateral; i++) {
+    if (isAsym) slots.push({ kind: 'C' });
+    else { slots.push({ kind: 'L' }); slots.push({ kind: 'R' }); }
+  }
+  return (
+    <div className="flex items-center gap-1">
+      {slots.map((s, i) => {
+        const isPair = (s.kind === 'L' && slots[i+1]?.kind === 'R');
+        const isPairEnd = s.kind === 'R' && slots[i-1]?.kind === 'L';
+        const styleMap = {
+          B: 'bg-white/12 border-white/10',
+          C: 'bg-[var(--color-asym-glow)] border-[var(--color-asym)]/30 text-[var(--color-asym)]',
+          L: 'bg-[var(--color-accent-glow)] border-[var(--color-accent)]/30 text-[var(--color-accent)]',
+          R: 'bg-[var(--color-accent-glow)] border-[var(--color-accent)]/30 text-[var(--color-accent)]',
+        };
+        const width = s.kind === 'C' ? 'w-9' : 'w-5';
+        const label = s.kind === 'B' ? '' : s.kind === 'C' ? 'L+R' : s.kind;
+        return (
+          <div
+            key={i}
+            className={`${width} h-5 rounded-md border flex items-center justify-center text-[9px] font-bold tracking-tighter ${styleMap[s.kind]} ${
+              isPair ? 'mr-0' : isPairEnd ? 'ml-0' : ''
+            }`}
+          >
+            {label}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ConfigCard({ config, onSelect }) {
-  const { id, style, duration, intervalSec, extendedSec, slots, sets, bilateral, unilateral, totalEx, cycleSec, totalSets } = config;
-  const isAsym = style === 'asymmetric';
-  const previewBlocks = useMemo(() => generateInitialBlocks(bilateral, unilateral), [bilateral, unilateral]);
-  const intervalDisplay = isAsym ? `${intervalSec}s + ${extendedSec}s` : `${intervalSec}s`;
-  const composition = isAsym
-    ? `${describeMix(bilateral, unilateral)} (combined)`
-    : describeMix(bilateral, unilateral);
+  const isAsym = config.style === 'asymmetric';
+  const tone = isAsym ? 'asym' : 'accent';
+  const intervalDisplay = isAsym ? `${config.intervalSec}s + ${config.extendedSec}s` : `${config.intervalSec}s base`;
 
   return (
     <button
-      onClick={() => onSelect(config)}
-      className={`w-full text-left border transition-colors bg-zinc-900/40 group ${
-        isAsym
-          ? 'border-fuchsia-900/60 hover:border-fuchsia-400/60'
-          : 'border-zinc-800 hover:border-amber-400/60'
-      }`}
+      type="button"
+      onClick={() => { cue.tap(); onSelect(config); }}
+      className="press group block w-full text-left rounded-2xl bg-[var(--color-surface-1)] border border-white/5 hover:border-white/10 transition-colors overflow-hidden"
     >
-      <div className="flex items-baseline justify-between px-4 py-3 border-b border-zinc-800/60 gap-3">
-        <div className="flex items-baseline gap-3 min-w-0">
-          <span className="font-mono text-[10px] text-zinc-600 uppercase tracking-widest whitespace-nowrap">CFG-{id}</span>
-          <span className={`font-mono text-sm whitespace-nowrap ${isAsym ? 'text-fuchsia-400' : 'text-amber-400'}`}>
-            {duration} min · {intervalDisplay}
-          </span>
+      <div className="px-5 pt-5 pb-4 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-baseline gap-2">
+            <span className="num text-[32px] font-bold tracking-tight text-ink-0 leading-none">{config.duration}</span>
+            <span className="text-[15px] font-medium text-ink-2 leading-none">min</span>
+          </div>
+          <div className="mt-1.5 text-[13px] text-ink-3 leading-snug">{intervalDisplay}</div>
         </div>
-        <span className="font-mono text-xs text-zinc-500 uppercase tracking-wider whitespace-nowrap">
-          {isAsym && <span className="text-fuchsia-400 mr-2">ASYM</span>}
-          {totalEx} {totalEx === 1 ? 'exercise' : 'exercises'}
-        </span>
-      </div>
-      <div className="grid grid-cols-3 gap-3 px-4 py-4 border-b border-zinc-800/60">
-        <Metric label="Format" value={`${slots} × ${sets}`} />
-        <Metric label="Cycle time" value={formatCycle(cycleSec)} />
-        <Metric label="Total sets" value={totalSets} />
-      </div>
-      <div className="px-4 py-4 flex items-end justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-2">Composition</div>
-          <div className="text-sm text-zinc-200 mb-3">{composition}</div>
-          <SlotStrip blocks={previewBlocks} style={style} />
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
+          {isAsym && <Chip tone="asym">ASYM</Chip>}
+          <div className="flex items-center gap-1 text-[12px] text-ink-2">
+            <Dumbbell size={12} strokeWidth={2.5} />
+            <span className="font-semibold">{config.totalEx}</span>
+            <span className="text-ink-3">ex</span>
+          </div>
         </div>
-        <div className={`text-[10px] font-mono uppercase tracking-widest text-zinc-600 group-hover:${isAsym ? 'text-fuchsia-400' : 'text-amber-400'} transition-colors whitespace-nowrap`}>
-          Select →
+      </div>
+
+      <div className="mx-5 h-px bg-white/5" />
+
+      <div className="px-5 py-4 grid grid-cols-3 gap-3">
+        <div>
+          <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-3 mb-1">Sets/ex</div>
+          <div className="num text-[18px] font-bold text-ink-1">{config.sets}</div>
+        </div>
+        <div>
+          <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-3 mb-1">Total</div>
+          <div className="num text-[18px] font-bold text-ink-1">{config.totalSets}</div>
+        </div>
+        <div>
+          <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-3 mb-1">Cycle</div>
+          <div className="num text-[18px] font-bold text-ink-1">{formatTime(config.cycleSec)}</div>
+        </div>
+      </div>
+
+      <div className="px-5 pb-5 pt-1 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <CompositionGraphic config={config} />
+        </div>
+        <div className={`flex items-center gap-1 text-[12px] font-semibold transition-colors ${
+          isAsym ? 'text-[var(--color-asym)]' : 'text-[var(--color-accent)]'
+        }`}>
+          Set up
+          <ChevronRight size={14} strokeWidth={2.5} />
         </div>
       </div>
     </button>
   );
 }
 
+function FilterSheet({ open, onClose, state, setState, styleFilter }) {
+  if (!open) return null;
+  const tone = styleFilter === 'asymmetric' ? 'asym' : 'accent';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-md mx-auto bg-[var(--color-surface-1)] rounded-t-3xl sm:rounded-3xl border-t sm:border border-white/8 shadow-2xl fade-up">
+        <div className="flex items-center justify-between px-5 pt-5 pb-3">
+          <h3 className="text-[18px] font-bold tracking-tight">Filters</h3>
+          <IconButton icon={X} onClick={onClose} label="Close" />
+        </div>
+        <div className="px-5 pb-6 space-y-6">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-3 mb-3">Duration</div>
+            <div className="flex flex-wrap gap-1.5">
+              <Pill active={state.duration === 'all'} onClick={() => setState(s => ({ ...s, duration: 'all' }))} tone={tone}>Any</Pill>
+              {[15, 20, 30, 45, 60].map(d => (
+                <Pill key={d} active={state.duration === d} onClick={() => setState(s => ({ ...s, duration: d }))} tone={tone}>{d} min</Pill>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-3 mb-3">Base interval</div>
+            <div className="flex flex-wrap gap-1.5">
+              <Pill active={state.intervalSec === 'all'} onClick={() => setState(s => ({ ...s, intervalSec: 'all' }))} tone={tone}>Any</Pill>
+              {[45, 60, 75, 90, 120].map(i => (
+                <Pill key={i} active={state.intervalSec === i} onClick={() => setState(s => ({ ...s, intervalSec: i }))} tone={tone}>{i}s</Pill>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-3 mb-3">Exercises</div>
+            <div className="flex flex-wrap gap-1.5">
+              <Pill active={state.exCount === 'any'} onClick={() => setState(s => ({ ...s, exCount: 'any' }))} tone={tone}>Any</Pill>
+              {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
+                <Pill key={n} active={state.exCount === n} onClick={() => setState(s => ({ ...s, exCount: n }))} tone={tone}>{n}</Pill>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-3 mb-3">Unilateral content</div>
+            <div className="flex flex-wrap gap-1.5">
+              <Pill active={state.uniFilter === 'any'} onClick={() => setState(s => ({ ...s, uniFilter: 'any' }))} tone={tone}>Any</Pill>
+              <Pill active={state.uniFilter === 'none'} onClick={() => setState(s => ({ ...s, uniFilter: 'none' }))} tone={tone}>All bilateral</Pill>
+              <Pill active={state.uniFilter === 'some'} onClick={() => setState(s => ({ ...s, uniFilter: 'some' }))} tone={tone}>Has unilateral</Pill>
+              <Pill active={state.uniFilter === 'pure'} onClick={() => setState(s => ({ ...s, uniFilter: 'pure' }))} tone={tone}>All unilateral</Pill>
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-3">Minimum sets per exercise</span>
+              <span className="num text-[14px] font-bold text-ink-1">{state.minSets}</span>
+            </div>
+            <input
+              type="range" min="3" max="15" value={state.minSets}
+              onChange={e => setState(s => ({ ...s, minSets: parseInt(e.target.value) }))}
+              className="w-full"
+              style={{ accentColor: tone === 'asym' ? 'var(--color-asym)' : 'var(--color-accent)' }}
+            />
+          </div>
+
+          <div className="pt-2">
+            <PrimaryButton onClick={onClose} tone={tone === 'asym' ? 'asym' : 'accent'} icon={Check}>
+              Apply
+            </PrimaryButton>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BrowseView({ onSelectConfig }) {
   const [styleFilter, setStyleFilter] = useState('uniform');
-  const [duration, setDuration] = useState('all');
-  const [intervalSec, setIntervalSec] = useState('all');
-  const [exCount, setExCount] = useState('any');
-  const [uniFilter, setUniFilter] = useState('any');
-  const [minSets, setMinSets] = useState(3);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filters, setFilters] = useState({
+    duration: 'all', intervalSec: 'all', exCount: 'any', uniFilter: 'any', minSets: 3,
+  });
 
   const setStyleAndAdjust = (next) => {
     setStyleFilter(next);
-    if (next === 'asymmetric') setUniFilter('some');
-    else setUniFilter('any');
+    setFilters(f => ({ ...f, uniFilter: next === 'asymmetric' ? 'some' : 'any' }));
   };
 
   const filtered = useMemo(() => CONFIGS.filter(c => {
     if (c.style !== styleFilter) return false;
-    if (duration !== 'all' && c.duration !== duration) return false;
-    if (intervalSec !== 'all' && c.intervalSec !== intervalSec) return false;
-    if (exCount !== 'any' && c.totalEx !== exCount) return false;
-    if (c.sets < minSets) return false;
-    if (uniFilter === 'none' && c.unilateral > 0) return false;
-    if (uniFilter === 'some' && c.unilateral === 0) return false;
-    if (uniFilter === 'pure' && c.bilateral > 0) return false;
+    if (filters.duration !== 'all' && c.duration !== filters.duration) return false;
+    if (filters.intervalSec !== 'all' && c.intervalSec !== filters.intervalSec) return false;
+    if (filters.exCount !== 'any' && c.totalEx !== filters.exCount) return false;
+    if (c.sets < filters.minSets) return false;
+    if (filters.uniFilter === 'none' && c.unilateral > 0) return false;
+    if (filters.uniFilter === 'some' && c.unilateral === 0) return false;
+    if (filters.uniFilter === 'pure' && c.bilateral > 0) return false;
     return true;
-  }), [styleFilter, duration, intervalSec, exCount, minSets, uniFilter]);
+  }), [styleFilter, filters]);
 
   const styleTotal = useMemo(() => CONFIGS.filter(c => c.style === styleFilter).length, [styleFilter]);
 
-  const resetFilters = () => {
-    setDuration('all'); setIntervalSec('all'); setExCount('any');
-    setUniFilter(styleFilter === 'asymmetric' ? 'some' : 'any');
-    setMinSets(3);
-  };
+  const activeFilterCount =
+    (filters.duration !== 'all' ? 1 : 0) +
+    (filters.intervalSec !== 'all' ? 1 : 0) +
+    (filters.exCount !== 'any' ? 1 : 0) +
+    (filters.uniFilter !== 'any' && filters.uniFilter !== (styleFilter === 'asymmetric' ? 'some' : 'any') ? 1 : 0) +
+    (filters.minSets > 3 ? 1 : 0);
 
   return (
-    <>
-      <div className="border-b border-zinc-800 pb-6 mb-6">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-amber-400 mb-2">
-          Athletic Potential · Programming Tool
-        </div>
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-zinc-100">
-          Interval Configuration Explorer
-        </h1>
-        <p className="text-sm text-zinc-400 mt-2 max-w-xl leading-relaxed">
-          Every interval-based lifting structure that fits cleanly into 15, 20, 30, 45, or 60-minute sessions across 45s, 60s, 75s, 90s, and 120s base intervals.
-          Tap a config to set exercise order and start a timed workout.
-        </p>
-      </div>
-
-      <div className="space-y-4 mb-6">
-        <FilterGroup label="Interval style">
-          <PillButton active={styleFilter === 'uniform'} onClick={() => setStyleAndAdjust('uniform')}>Uniform</PillButton>
-          <PillButton active={styleFilter === 'asymmetric'} onClick={() => setStyleAndAdjust('asymmetric')}>Asymmetric (combined U)</PillButton>
-        </FilterGroup>
-        <FilterGroup label="Duration">
-          <PillButton active={duration === 'all'} onClick={() => setDuration('all')}>All</PillButton>
-          {[15, 20, 30, 45, 60].map(d => (
-            <PillButton key={d} active={duration === d} onClick={() => setDuration(d)}>{d} min</PillButton>
-          ))}
-        </FilterGroup>
-        <FilterGroup label="Interval">
-          <PillButton active={intervalSec === 'all'} onClick={() => setIntervalSec('all')}>All</PillButton>
-          {[45, 60, 75, 90, 120].map(i => (
-            <PillButton key={i} active={intervalSec === i} onClick={() => setIntervalSec(i)}>{i}s</PillButton>
-          ))}
-        </FilterGroup>
-        <FilterGroup label="Total exercises">
-          <PillButton active={exCount === 'any'} onClick={() => setExCount('any')}>Any</PillButton>
-          {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
-            <PillButton key={n} active={exCount === n} onClick={() => setExCount(n)}>{n}</PillButton>
-          ))}
-        </FilterGroup>
-        <FilterGroup label="Unilateral content">
-          <PillButton active={uniFilter === 'any'} onClick={() => setUniFilter('any')}>Any</PillButton>
-          <PillButton active={uniFilter === 'none'} onClick={() => setUniFilter('none')}>All bilateral</PillButton>
-          <PillButton active={uniFilter === 'some'} onClick={() => setUniFilter('some')}>Has unilateral</PillButton>
-          <PillButton active={uniFilter === 'pure'} onClick={() => setUniFilter('pure')}>All unilateral</PillButton>
-        </FilterGroup>
-        <FilterGroup label={`Minimum sets per exercise: ${minSets}`}>
-          <input
-            type="range" min="3" max="15" value={minSets}
-            onChange={e => setMinSets(parseInt(e.target.value))}
-            className="w-full accent-amber-400"
+    <div className="fade-up">
+      <ScreenHeader
+        eyebrow="Interval Trainer"
+        title="Pick a session"
+        tone={styleFilter === 'asymmetric' ? 'asym' : 'accent'}
+        right={
+          <IconButton
+            icon={Filter}
+            onClick={() => { cue.tap(); setFilterOpen(true); }}
+            label="Filters"
+            tone="surface"
           />
-        </FilterGroup>
-        <div className="pt-2">
-          <button
-            onClick={resetFilters}
-            className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 hover:text-amber-400 transition-colors"
-          >
-            [ Reset filters ]
-          </button>
-        </div>
+        }
+      />
+
+      <div className="mb-5">
+        <Segment
+          value={styleFilter}
+          onChange={setStyleAndAdjust}
+          tone={styleFilter === 'asymmetric' ? 'asym' : 'accent'}
+          options={[
+            { value: 'uniform', label: 'Uniform' },
+            { value: 'asymmetric', label: 'Asymmetric' },
+          ]}
+        />
       </div>
 
-      <div className="flex items-center justify-between mb-4 pb-3 border-b border-zinc-800">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500">
-          Showing · <span className={styleFilter === 'asymmetric' ? 'text-fuchsia-400' : 'text-amber-400'}>
-            {styleFilter === 'asymmetric' ? 'asymmetric' : 'uniform'}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-baseline gap-2">
+          <span className={`num text-[24px] font-bold tracking-tight ${styleFilter === 'asymmetric' ? 'text-[var(--color-asym)]' : 'text-[var(--color-accent)]'}`}>
+            {filtered.length}
           </span>
+          <span className="text-[13px] text-ink-3">of {styleTotal}</span>
         </div>
-        <div className="font-mono">
-          <span className={`text-2xl font-bold ${styleFilter === 'asymmetric' ? 'text-fuchsia-400' : 'text-amber-400'}`}>{filtered.length}</span>
-          <span className="text-sm text-zinc-500 ml-2">/ {styleTotal}</span>
-        </div>
+        {activeFilterCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setFilters({ duration: 'all', intervalSec: 'all', exCount: 'any', uniFilter: styleFilter === 'asymmetric' ? 'some' : 'any', minSets: 3 })}
+            className="text-[12px] font-medium text-ink-3 hover:text-ink-1 transition-colors"
+          >
+            Clear filters · {activeFilterCount}
+          </button>
+        )}
       </div>
 
       {filtered.length === 0 ? (
-        <div className="text-center py-12 text-zinc-500 font-mono text-sm border border-zinc-800 border-dashed">
-          No configurations match these filters
-        </div>
+        <Surface className="py-14 text-center">
+          <div className="text-[14px] text-ink-3">No sessions match those filters.</div>
+        </Surface>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2.5 fade-up-stagger">
           {filtered.map(c => <ConfigCard key={c.id} config={c} onSelect={onSelectConfig} />)}
         </div>
       )}
-    </>
+
+      <FilterSheet
+        open={filterOpen}
+        onClose={() => setFilterOpen(false)}
+        state={filters}
+        setState={setFilters}
+        styleFilter={styleFilter}
+      />
+    </div>
   );
 }
 
 // =============================================================================
 // CONFIGURE VIEW
 // =============================================================================
-function BlockEditor({ block, idx, total, onMoveUp, onMoveDown, onRename, onToggleType }) {
+function BlockRow({ block, idx, total, onMoveUp, onMoveDown, onRename, onToggleType }) {
   const isU = block.type === 'U';
   const isA = block.type === 'A';
-  const badgeStyle = isU
-    ? 'text-amber-300 border-amber-800 bg-amber-950 cursor-default'
-    : isA
-    ? 'text-cyan-300 border-cyan-800 bg-cyan-950 hover:border-cyan-600'
-    : 'text-zinc-300 border-zinc-700 bg-zinc-800 hover:border-zinc-500';
-  const badgeLabel = isU ? 'Unilateral' : isA ? 'Alternating' : 'Bilateral';
+  const typeBadge = isU ? 'Per-side' : isA ? 'Alternating' : 'Bilateral';
+  const typeTone = isU ? 'accent' : isA ? 'alt' : 'muted';
+
   return (
-    <div className="border border-zinc-800 bg-zinc-900/40 p-3 flex items-center gap-3">
-      <button
-        type="button"
-        onClick={isU ? undefined : onToggleType}
-        disabled={isU}
-        title={isU ? 'Per-side unilateral (occupies 2 slots)' : 'Tap to toggle bilateral ↔ alternating L/R'}
-        className={`font-mono text-[10px] uppercase tracking-widest px-2 py-1 border transition-colors ${badgeStyle}`}
-      >
-        {badgeLabel}
-      </button>
-      <input
-        type="text"
-        value={block.name}
-        onChange={e => onRename(e.target.value)}
-        className="flex-1 bg-transparent text-zinc-100 border-b border-zinc-800 focus:border-amber-400 focus:outline-none py-1 text-sm"
-        placeholder={`Exercise ${idx + 1}`}
-      />
-      <div className="flex flex-col gap-0.5">
-        <button
-          onClick={onMoveUp}
-          disabled={idx === 0}
-          className="w-7 h-5 flex items-center justify-center border border-zinc-800 text-zinc-400 hover:border-amber-400 hover:text-amber-400 disabled:opacity-20 disabled:hover:border-zinc-800 disabled:hover:text-zinc-400 transition-colors text-xs"
-        >▲</button>
-        <button
-          onClick={onMoveDown}
-          disabled={idx === total - 1}
-          className="w-7 h-5 flex items-center justify-center border border-zinc-800 text-zinc-400 hover:border-amber-400 hover:text-amber-400 disabled:opacity-20 disabled:hover:border-zinc-800 disabled:hover:text-zinc-400 transition-colors text-xs"
-        >▼</button>
+    <Surface className="px-4 py-3.5 flex items-center gap-3 border border-white/5">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-1.5">
+          <button
+            type="button"
+            onClick={isU ? undefined : () => { cue.tap(); onToggleType(); }}
+            disabled={isU}
+            className={`press inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-[0.1em] transition-colors ${
+              isU ? 'bg-[var(--color-accent-glow)] text-[var(--color-accent)] cursor-default'
+                : isA ? 'bg-cyan-500/15 text-[var(--color-alt)] hover:bg-cyan-500/25'
+                : 'bg-white/8 text-ink-2 hover:bg-white/12'
+            }`}
+          >
+            {isA && <Repeat size={9} strokeWidth={3} />}
+            {isU && <Activity size={9} strokeWidth={3} />}
+            {typeBadge}
+          </button>
+          <span className="text-[10.5px] text-ink-3 font-medium">#{idx + 1}</span>
+        </div>
+        <input
+          type="text"
+          value={block.name}
+          onChange={e => onRename(e.target.value)}
+          placeholder={`Exercise ${idx + 1}`}
+          className="w-full bg-transparent text-[16px] font-semibold text-ink-0 placeholder:text-ink-4 focus:outline-none"
+        />
       </div>
-    </div>
+      <div className="flex flex-col gap-0.5 shrink-0">
+        <button
+          type="button"
+          onClick={() => { cue.tap(); onMoveUp(); }}
+          disabled={idx === 0}
+          className="press w-8 h-7 rounded-lg bg-[var(--color-surface-3)] text-ink-2 hover:text-ink-0 disabled:opacity-25 flex items-center justify-center transition-colors"
+        >
+          <ChevronUp size={14} strokeWidth={2.5} />
+        </button>
+        <button
+          type="button"
+          onClick={() => { cue.tap(); onMoveDown(); }}
+          disabled={idx === total - 1}
+          className="press w-8 h-7 rounded-lg bg-[var(--color-surface-3)] text-ink-2 hover:text-ink-0 disabled:opacity-25 flex items-center justify-center transition-colors"
+        >
+          <ChevronDown size={14} strokeWidth={2.5} />
+        </button>
+      </div>
+    </Surface>
   );
 }
 
 function ConfigureView({ config, blocks, setBlocks, onBack, onStart }) {
+  const isAsym = config.style === 'asymmetric';
+  const tone = isAsym ? 'asym' : 'accent';
+
   const moveBlock = (idx, direction) => {
     const newIdx = idx + direction;
     if (newIdx < 0 || newIdx >= blocks.length) return;
-    const newBlocks = [...blocks];
-    [newBlocks[idx], newBlocks[newIdx]] = [newBlocks[newIdx], newBlocks[idx]];
-    setBlocks(newBlocks);
+    const next = [...blocks];
+    [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+    setBlocks(next);
   };
   const updateName = (idx, name) => {
-    const newBlocks = [...blocks];
-    newBlocks[idx] = { ...newBlocks[idx], name };
-    setBlocks(newBlocks);
+    const next = [...blocks];
+    next[idx] = { ...next[idx], name };
+    setBlocks(next);
   };
   const toggleType = (idx) => {
-    const newBlocks = [...blocks];
-    const current = newBlocks[idx];
-    if (current.type === 'U') return;
-    newBlocks[idx] = { ...current, type: current.type === 'B' ? 'A' : 'B' };
-    setBlocks(newBlocks);
+    const next = [...blocks];
+    if (next[idx].type === 'U') return;
+    next[idx] = { ...next[idx], type: next[idx].type === 'B' ? 'A' : 'B' };
+    setBlocks(next);
   };
+
   const previewSlots = expandBlocksToSlots(blocks, config);
-  const altCount = blocks.filter(b => b.type === 'A').length;
-  const isAsym = config.style === 'asymmetric';
-  const intervalDisplay = isAsym ? `${config.intervalSec}s + ${config.extendedSec}s` : `${config.intervalSec}s`;
 
   return (
-    <>
-      <BackButton onClick={onBack} label="Back to browse" />
-      <div className="border-b border-zinc-800 pb-6 mb-6">
-        <div className={`text-[10px] font-mono uppercase tracking-widest mb-2 ${isAsym ? 'text-fuchsia-400' : 'text-amber-400'}`}>
-          Configure Session · CFG-{config.id}{isAsym && ' · ASYMMETRIC'}
-        </div>
-        <h1 className="text-2xl font-bold tracking-tight text-zinc-100">
-          {config.duration} min · {intervalDisplay} · {config.slots} × {config.sets}
-        </h1>
-        <div className="text-sm text-zinc-400 mt-2">
-          {describeMix(config.bilateral, config.unilateral)}{isAsym && ' (combined)'} · cycle {formatCycle(config.cycleSec)} · {config.totalSets} total sets
-        </div>
+    <div className="fade-up">
+      <div className="flex items-center -ml-2 mb-3">
+        <IconButton icon={ChevronLeft} onClick={() => { cue.tap(); onBack(); }} label="Back" />
+        <span className="text-[14px] text-ink-2 ml-1">Sessions</span>
       </div>
 
-      <div className="mb-6">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-3">
-          Round order · rename & reorder
+      <ScreenHeader
+        eyebrow={isAsym ? 'Asymmetric session' : 'Session setup'}
+        title="Build your round"
+        tone={tone}
+      />
+
+      <Surface className="p-4 mb-6 border border-white/5">
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-3 mb-1">Duration</div>
+            <div className="num text-[18px] font-bold text-ink-0">{config.duration} <span className="text-[12px] text-ink-3 font-medium">min</span></div>
+          </div>
+          <div>
+            <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-3 mb-1">Interval</div>
+            <div className="num text-[18px] font-bold text-ink-0">
+              {isAsym ? `${config.intervalSec}+${config.extendedSec}` : config.intervalSec}<span className="text-[12px] text-ink-3 font-medium">s</span>
+            </div>
+          </div>
+          <div>
+            <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-3 mb-1">Total sets</div>
+            <div className="num text-[18px] font-bold text-ink-0">{config.totalSets}</div>
+          </div>
         </div>
-        <div className="space-y-2">
-          {blocks.map((block, idx) => (
-            <BlockEditor
-              key={block.id}
-              block={block}
-              idx={idx}
-              total={blocks.length}
-              onMoveUp={() => moveBlock(idx, -1)}
-              onMoveDown={() => moveBlock(idx, 1)}
-              onRename={(name) => updateName(idx, name)}
-              onToggleType={() => toggleType(idx)}
-            />
-          ))}
-        </div>
+      </Surface>
+
+      <div className="mb-3 flex items-baseline justify-between">
+        <h2 className="text-[15px] font-bold tracking-tight text-ink-1">Exercises</h2>
+        <span className="text-[12px] text-ink-3">tap badge · rename · reorder</span>
       </div>
 
-      <div className="mb-8 border border-zinc-800 bg-zinc-900/40 p-4">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-2">
-          Round sequence preview
+      <div className="space-y-2 mb-6">
+        {blocks.map((block, idx) => (
+          <BlockRow
+            key={block.id}
+            block={block}
+            idx={idx}
+            total={blocks.length}
+            onMoveUp={() => moveBlock(idx, -1)}
+            onMoveDown={() => moveBlock(idx, 1)}
+            onRename={(name) => updateName(idx, name)}
+            onToggleType={() => toggleType(idx)}
+          />
+        ))}
+      </div>
+
+      <Surface className="p-4 mb-6 border border-white/5">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-[13px] font-semibold text-ink-2">Round sequence</h3>
+          <span className="text-[12px] text-ink-3">× {config.sets} rounds</span>
         </div>
-        <div className="flex flex-wrap gap-1 mb-3">
+        <div className="flex flex-wrap gap-1.5">
           {previewSlots.map((slot, idx) => {
-            const style = slot.combined
-              ? 'border-fuchsia-800 bg-fuchsia-950 text-fuchsia-300'
+            const cls = slot.combined
+              ? 'bg-[var(--color-asym-glow)] text-[var(--color-asym)] border-[var(--color-asym)]/30'
               : slot.alternating
-              ? 'border-cyan-800 bg-cyan-950 text-cyan-300'
+              ? 'bg-cyan-500/15 text-[var(--color-alt)] border-cyan-400/30'
               : slot.side
-              ? 'border-amber-800 bg-amber-950 text-amber-300'
-              : 'border-zinc-700 bg-zinc-800 text-zinc-200';
-            const suffix = slot.combined
-              ? ` (L+R · ${slot.duration}s)`
-              : slot.alternating
-              ? ' (alt L/R)'
-              : slot.side
-              ? ` (${slot.side[0]})`
-              : '';
+              ? 'bg-[var(--color-accent-glow)] text-[var(--color-accent)] border-[var(--color-accent)]/30'
+              : 'bg-white/8 text-ink-1 border-white/8';
+            const suffix = slot.combined ? ` · L+R` : slot.alternating ? ` · alt` : slot.side ? ` · ${slot.side}` : '';
             return (
-              <div key={idx} className={`px-2 py-1 text-xs font-mono border ${style}`}>
+              <span key={idx} className={`inline-flex items-center rounded-lg border px-2.5 py-1.5 text-[12px] font-medium ${cls}`}>
                 {slot.name}{suffix}
-              </div>
+              </span>
             );
           })}
         </div>
-        <div className="text-[10px] text-zinc-500 font-mono">
-          This sequence repeats {config.sets} times.
-          {altCount > 0 && <span className="text-cyan-400 ml-2">· {altCount} alternating</span>}
-        </div>
-      </div>
+      </Surface>
 
-      <button
-        onClick={onStart}
-        className={`w-full py-4 text-zinc-950 font-bold uppercase tracking-widest text-sm transition-colors ${
-          isAsym ? 'bg-fuchsia-400 hover:bg-fuchsia-300' : 'bg-amber-400 hover:bg-amber-300'
-        }`}
-      >
-        Start Workout →
-      </button>
-    </>
+      <PrimaryButton onClick={() => { cue.tap(); onStart(); }} tone={tone} icon={Play}>
+        Start workout
+      </PrimaryButton>
+    </div>
   );
 }
 
 // =============================================================================
 // TIMER VIEW
 // =============================================================================
+function ProgressRing({ progress, color, size = 280, stroke = 8 }) {
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - progress * circumference;
+  return (
+    <svg width={size} height={size} className="absolute inset-0 m-auto" style={{ transform: 'rotate(-90deg)' }}>
+      <circle
+        cx={size / 2} cy={size / 2} r={radius}
+        stroke="rgba(255,255,255,0.06)" strokeWidth={stroke} fill="none"
+      />
+      <circle
+        cx={size / 2} cy={size / 2} r={radius}
+        stroke={color} strokeWidth={stroke} fill="none"
+        strokeLinecap="round"
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        style={{ transition: 'stroke-dashoffset 0.4s linear' }}
+      />
+    </svg>
+  );
+}
+
 function TimerView({ config, blocks, onBack }) {
   const slots = useMemo(() => expandBlocksToSlots(blocks, config), [blocks, config]);
   const totalSlots = slots.length * config.sets;
   const isAsym = config.style === 'asymmetric';
-  const accent = isAsym ? 'fuchsia' : 'amber';
+  const tone = isAsym ? 'asym' : 'accent';
 
   const [currentIdx, setCurrentIdx] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(() => slots[0]?.duration ?? config.intervalSec);
@@ -588,25 +877,24 @@ function TimerView({ config, blocks, onBack }) {
   const currentSlot = !isComplete ? slots[currentIdx % slots.length] : null;
   const nextSlot = currentIdx + 1 < totalSlots ? slots[(currentIdx + 1) % slots.length] : null;
   const currentSet = isComplete ? config.sets : Math.floor(currentIdx / slots.length) + 1;
-  const slotInRound = isComplete ? slots.length : (currentIdx % slots.length) + 1;
 
-  // Pre-countdown
+  // pre-countdown
   useEffect(() => {
     if (preCount === null) return;
     if (preCount === 0) {
       const t = setTimeout(() => {
         setPreCount(null);
         setRunning(true);
-        if (audioOn) playBeep(880, 0.4, 0.4);
-      }, 500);
+        if (audioOn) cue.go();
+      }, 600);
       return () => clearTimeout(t);
     }
-    if (audioOn) playBeep(440, 0.12);
+    if (audioOn) cue.preTick(preCount);
     const t = setTimeout(() => setPreCount(preCount - 1), 1000);
     return () => clearTimeout(t);
   }, [preCount, audioOn]);
 
-  // Main tick
+  // main tick
   useEffect(() => {
     if (!running) return;
     if (currentIdx >= totalSlots) {
@@ -618,9 +906,9 @@ function TimerView({ config, blocks, onBack }) {
     const tick = setInterval(() => {
       setSecondsLeft(prev => {
         if (prev > 1) {
-          if (prev === 4 && audioOn) playBeep(660, 0.08, 0.2);
+          if (prev === 4 && audioOn) cue.warning3sec();
           if (slot.combined && !midCueFiredRef.current && prev === halfway && audioOn) {
-            playBeep(550, 0.22, 0.4);
+            cue.halfway();
             midCueFiredRef.current = true;
           }
           return prev - 1;
@@ -635,20 +923,15 @@ function TimerView({ config, blocks, onBack }) {
     return () => clearInterval(tick);
   }, [running, currentIdx, totalSlots, slots, audioOn]);
 
-  // Beep on transition
+  // transition beeps + completion fanfare
   useEffect(() => {
     if (currentIdx === prevIdxRef.current) return;
-    if (currentIdx > 0 && currentIdx < totalSlots && audioOn) {
-      playBeep(880, 0.2, 0.4);
-    }
-    if (currentIdx >= totalSlots && audioOn) {
-      playBeep(330, 0.6, 0.4);
-      setTimeout(() => playBeep(440, 0.6, 0.4), 200);
-    }
+    if (currentIdx > 0 && currentIdx < totalSlots && audioOn) cue.transition();
+    if (currentIdx >= totalSlots && audioOn) cue.complete();
     prevIdxRef.current = currentIdx;
   }, [currentIdx, totalSlots, audioOn]);
 
-  // Wake lock
+  // wake lock
   useEffect(() => {
     let lock = null;
     let cancelled = false;
@@ -672,9 +955,10 @@ function TimerView({ config, blocks, onBack }) {
     }
     setPreCount(3);
   };
-  const pause = () => setRunning(false);
-  const resume = () => setRunning(true);
+  const pause = () => { cue.tap(); setRunning(false); };
+  const resume = () => { cue.tap(); setRunning(true); };
   const reset = () => {
+    cue.tap();
     setRunning(false);
     setPreCount(null);
     setCurrentIdx(0);
@@ -684,185 +968,172 @@ function TimerView({ config, blocks, onBack }) {
   };
   const skip = () => {
     if (isComplete) return;
+    cue.tap();
     const newIdx = currentIdx + 1;
     setCurrentIdx(newIdx);
     midCueFiredRef.current = false;
-    if (newIdx >= totalSlots) {
-      setSecondsLeft(0);
-    } else {
-      setSecondsLeft(slots[newIdx % slots.length].duration);
-    }
+    if (newIdx >= totalSlots) setSecondsLeft(0);
+    else setSecondsLeft(slots[newIdx % slots.length].duration);
   };
 
-  const progressPct = (currentIdx / totalSlots) * 100;
-  const showTimer = preCount === null && !isComplete;
   const showPre = preCount !== null;
   const hasStarted = currentIdx > 0 || running;
+  const slotDuration = currentSlot?.duration ?? config.intervalSec;
+  const slotProgress = currentSlot ? 1 - secondsLeft / slotDuration : 0;
+  const ringColor = currentSlot?.combined
+    ? 'var(--color-asym)'
+    : currentSlot?.alternating
+    ? 'var(--color-alt)'
+    : 'var(--color-accent)';
+  const sessionProgress = currentIdx / totalSlots;
 
   return (
-    <>
-      <BackButton onClick={onBack} label="Back to configure" />
-
-      <div className="mb-6">
-        <div className={`text-[10px] font-mono uppercase tracking-widest mb-1 ${isAsym ? 'text-fuchsia-400' : 'text-amber-400'}`}>
-          Live Session · CFG-{config.id}{isAsym && ' · ASYM'}
+    <div className="fade-up">
+      <div className="flex items-center justify-between mb-4 -ml-2">
+        <button
+          type="button"
+          onClick={() => { cue.tap(); onBack(); }}
+          className="press inline-flex items-center gap-1 text-[14px] text-ink-2 hover:text-ink-0 pl-2 pr-3 py-2 -my-2 rounded-lg"
+        >
+          <ChevronLeft size={16} strokeWidth={2.5} />
+          Setup
+        </button>
+        <div className="flex items-center gap-2">
+          {isAsym && <Chip tone="asym">ASYM</Chip>}
+          <span className="text-[12px] text-ink-3 font-medium tabular">
+            {config.duration} min · {isAsym ? `${config.intervalSec}+${config.extendedSec}` : config.intervalSec}s
+          </span>
         </div>
-        <div className="text-xs text-zinc-500 font-mono">
-          {config.duration} min · {isAsym ? `${config.intervalSec}s+${config.extendedSec}s` : `${config.intervalSec}s`} · {config.slots}×{config.sets}
+      </div>
+
+      {/* Session progress bar */}
+      <div className="mb-7">
+        <div className="h-1 rounded-full bg-white/5 overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all duration-500"
+            style={{ width: `${sessionProgress * 100}%`, background: ringColor }}
+          />
+        </div>
+        <div className="mt-2 flex items-center justify-between text-[11px] text-ink-3 tabular">
+          <span>Round <span className="text-ink-1 font-semibold">{currentSet}</span> of {config.sets}</span>
+          <span><span className="text-ink-1 font-semibold">{currentIdx}</span> / {totalSlots} sets</span>
         </div>
       </div>
 
       {showPre && (
-        <div className="flex flex-col items-center justify-center py-16 mb-6 border border-amber-400/40 bg-amber-400/5">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-amber-400 mb-4">
-            Get Ready
-          </div>
-          <div className="text-9xl font-bold text-amber-400 font-mono">
+        <div className="flex flex-col items-center justify-center py-16 fade-up">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-3 mb-3">Get ready</div>
+          <div className="num text-[140px] font-bold leading-none" style={{ color: ringColor }}>
             {preCount === 0 ? 'GO' : preCount}
           </div>
         </div>
       )}
 
-      {isComplete && (
-        <div className="flex flex-col items-center justify-center py-16 mb-6 border border-amber-400/40 bg-amber-400/5">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-amber-400 mb-2">
-            Session Complete
+      {isComplete && !showPre && (
+        <div className="flex flex-col items-center justify-center py-14 fade-up">
+          <div className="w-16 h-16 rounded-full flex items-center justify-center mb-5"
+               style={{ background: `radial-gradient(circle, ${ringColor}33, transparent 70%)` }}>
+            <Check size={36} strokeWidth={2.5} style={{ color: ringColor }} />
           </div>
-          <div className="text-3xl font-bold text-zinc-100 mb-1">Done.</div>
-          <div className="text-sm text-zinc-400 font-mono">
-            {config.totalSets} sets · {config.duration} minutes
-          </div>
+          <div className="text-[28px] font-bold tracking-tight text-ink-0 mb-1">Session complete</div>
+          <div className="text-[14px] text-ink-3 tabular">{config.totalSets} sets · {config.duration} minutes</div>
         </div>
       )}
 
-      {showTimer && (
+      {!showPre && !isComplete && currentSlot && (
         <>
-          <div className="border border-zinc-800 bg-zinc-900/40 p-6 mb-4">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-2">Now</div>
-            <div className="text-3xl sm:text-4xl font-bold text-zinc-100 mb-1 leading-tight break-words">
-              {currentSlot.name}
-            </div>
-            {currentSlot.side && (
-              <div className="text-xl font-mono text-amber-400 uppercase tracking-wider mt-1">
-                {currentSlot.side} side
-              </div>
-            )}
-            {currentSlot.alternating && (
-              <div className="text-xl font-mono text-cyan-400 uppercase tracking-wider mt-1">
-                Alternate L / R
-              </div>
-            )}
-            <div className="mt-6 flex items-baseline gap-3">
-              <div className={`text-7xl sm:text-8xl font-mono font-bold tabular-nums ${
-                currentSlot.combined ? 'text-fuchsia-400' : currentSlot.alternating ? 'text-cyan-400' : 'text-amber-400'
-              }`}>
+          {/* Hero ring + countdown */}
+          <div className="relative mx-auto mb-7" style={{ width: 280, height: 280 }}>
+            <ProgressRing progress={slotProgress} color={ringColor} />
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <div className="num text-[88px] sm:text-[96px] font-bold leading-none tracking-tight tabular" style={{ color: ringColor }}>
                 {secondsLeft}
               </div>
-              <div className="text-sm font-mono uppercase tracking-widest text-zinc-500">sec</div>
+              <div className="text-[11px] uppercase tracking-[0.16em] text-ink-3 mt-1">seconds</div>
             </div>
           </div>
 
+          {/* Current exercise */}
+          <div className="text-center mb-6">
+            <div className="text-[24px] sm:text-[26px] font-bold tracking-tight text-ink-0 leading-tight">
+              {currentSlot.name}
+            </div>
+            <div className="mt-2 flex items-center justify-center gap-2">
+              {currentSlot.side && (
+                <Chip tone="accent">{currentSlot.side === 'L' ? 'Left side' : 'Right side'}</Chip>
+              )}
+              {currentSlot.alternating && (
+                <Chip tone="alt"><Repeat size={11} strokeWidth={3} /> Alternating L / R</Chip>
+              )}
+              {currentSlot.combined && (
+                <Chip tone="asym"><Activity size={11} strokeWidth={3} /> Combined · L + R</Chip>
+              )}
+            </div>
+          </div>
+
+          {/* Next up */}
           {nextSlot && (
-            <div className="border border-zinc-800 bg-zinc-900/20 p-4 mb-4">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-1">Next</div>
-              <div className="text-lg text-zinc-300">
-                {nextSlot.name}
-                {nextSlot.side && <span className="text-amber-400/80 ml-2">({nextSlot.side})</span>}
-                {nextSlot.alternating && <span className="text-cyan-400/80 ml-2">(alt L/R)</span>}
-                {nextSlot.combined && <span className="text-fuchsia-400/80 ml-2">(L+R · {nextSlot.duration}s)</span>}
+            <Surface className="px-4 py-3 mb-6 border border-white/5 flex items-center justify-between">
+              <div className="min-w-0">
+                <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-3 mb-0.5">Next</div>
+                <div className="text-[15px] font-semibold text-ink-1 truncate">{nextSlot.name}</div>
               </div>
-            </div>
+              <div className="shrink-0">
+                {nextSlot.side && <Chip tone="muted">{nextSlot.side}</Chip>}
+                {nextSlot.alternating && <Chip tone="alt">alt</Chip>}
+                {nextSlot.combined && <Chip tone="asym">L+R · {nextSlot.duration}s</Chip>}
+              </div>
+            </Surface>
           )}
-
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <div className="border border-zinc-800 bg-zinc-900/40 p-3">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-1">Set</div>
-              <div className="font-mono text-lg text-zinc-100">{currentSet} / {config.sets}</div>
-            </div>
-            <div className="border border-zinc-800 bg-zinc-900/40 p-3">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-1">Slot in round</div>
-              <div className="font-mono text-lg text-zinc-100">{slotInRound} / {slots.length}</div>
-            </div>
-          </div>
-
-          <div className="mb-6">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-2">
-              Session progress · {currentIdx} / {totalSlots} sets
-            </div>
-            <div className="h-2 bg-zinc-900 border border-zinc-800 overflow-hidden">
-              <div
-                className={`h-full transition-all duration-300 ${isAsym ? 'bg-fuchsia-400' : 'bg-amber-400'}`}
-                style={{ width: `${progressPct}%` }}
-              />
-            </div>
-          </div>
         </>
       )}
 
+      {/* Controls */}
       {!showPre && (
-        <div className="grid grid-cols-2 gap-3 mb-4">
+        <div className="space-y-2.5">
           {!running && !isComplete && (
-            <button
-              onClick={hasStarted ? resume : start}
-              className={`col-span-2 py-4 text-zinc-950 font-bold uppercase tracking-widest text-sm transition-colors ${
-                isAsym ? 'bg-fuchsia-400 hover:bg-fuchsia-300' : 'bg-amber-400 hover:bg-amber-300'
-              }`}
-            >
-              {hasStarted ? 'Resume' : 'Start Workout'}
-            </button>
+            <PrimaryButton onClick={() => { cue.tap(); hasStarted ? resume() : start(); }} tone={tone} icon={Play}>
+              {hasStarted ? 'Resume' : 'Start workout'}
+            </PrimaryButton>
           )}
           {running && (
-            <button
-              onClick={pause}
-              className="col-span-2 py-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-bold uppercase tracking-widest text-sm transition-colors border border-zinc-700"
-            >
-              Pause
-            </button>
+            <PrimaryButton onClick={pause} tone="surface" icon={Pause}>Pause</PrimaryButton>
           )}
           {isComplete && (
-            <button
-              onClick={start}
-              className={`col-span-2 py-4 text-zinc-950 font-bold uppercase tracking-widest text-sm transition-colors ${
-                isAsym ? 'bg-fuchsia-400 hover:bg-fuchsia-300' : 'bg-amber-400 hover:bg-amber-300'
-              }`}
-            >
-              Run Again
-            </button>
+            <PrimaryButton onClick={start} tone={tone} icon={Play}>Run again</PrimaryButton>
           )}
-          {!isComplete && hasStarted && (
-            <>
+          {hasStarted && !isComplete && (
+            <div className="grid grid-cols-2 gap-2.5">
               <button
+                type="button"
                 onClick={skip}
-                className="py-3 border border-zinc-800 hover:border-zinc-600 text-zinc-400 hover:text-zinc-100 font-mono uppercase tracking-widest text-xs transition-colors"
+                className="press py-3 rounded-2xl bg-[var(--color-surface-2)] text-ink-1 text-[14px] font-semibold inline-flex items-center justify-center gap-2 hover:bg-[var(--color-surface-3)]"
               >
-                Skip ▶
+                <SkipForward size={15} strokeWidth={2.5} />
+                Skip
               </button>
               <button
+                type="button"
                 onClick={reset}
-                className="py-3 border border-zinc-800 hover:border-zinc-600 text-zinc-400 hover:text-zinc-100 font-mono uppercase tracking-widest text-xs transition-colors"
+                className="press py-3 rounded-2xl bg-[var(--color-surface-2)] text-ink-1 text-[14px] font-semibold inline-flex items-center justify-center gap-2 hover:bg-[var(--color-surface-3)]"
               >
+                <RotateCcw size={15} strokeWidth={2.5} />
                 Reset
               </button>
-            </>
+            </div>
           )}
         </div>
       )}
 
-      <div className="mt-6 flex items-center justify-between border-t border-zinc-800 pt-4">
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={audioOn}
-            onChange={e => setAudioOn(e.target.checked)}
-            className="accent-amber-400"
-          />
-          <span className="text-xs font-mono uppercase tracking-widest text-zinc-400">Audio cues</span>
-        </label>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-600">
-          screen stays awake while running
+      {/* Audio toggle */}
+      <div className="mt-7 pt-5 border-t border-white/5 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          {audioOn ? <Volume2 size={16} className="text-ink-2" strokeWidth={2.25} /> : <VolumeX size={16} className="text-ink-3" strokeWidth={2.25} />}
+          <span className="text-[13px] text-ink-2 font-medium">Audio cues</span>
         </div>
+        <Switch checked={audioOn} onChange={setAudioOn} />
       </div>
-    </>
+    </div>
   );
 }
 
@@ -881,8 +1152,15 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 p-4 pb-12">
-      <div className="max-w-2xl mx-auto">
+    <div
+      className="min-h-screen text-ink-1"
+      style={{
+        background: 'radial-gradient(120% 80% at 50% -10%, rgba(255,181,71,0.06), transparent 60%), var(--color-surface-0)',
+        paddingTop: 'max(env(safe-area-inset-top), 16px)',
+        paddingBottom: 'max(env(safe-area-inset-bottom), 32px)',
+      }}
+    >
+      <div className="max-w-md mx-auto px-5">
         {view === 'browse' && <BrowseView onSelectConfig={handleSelectConfig} />}
         {view === 'configure' && (
           <ConfigureView
