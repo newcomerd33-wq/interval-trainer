@@ -543,21 +543,39 @@ function Wizard({ onPickConfig, onPickCustom, onOpenLibrary, libraryCount }) {
 // =============================================================================
 function SaveDialog({ open, defaultName, onClose, onSave }) {
   const [name, setName] = useState('');
+  const inputRef = useRef(null);
   useEffect(() => { if (open) setName(defaultName || ''); }, [open, defaultName]);
+  // Focus + scroll into view once mounted; redo after a delay so iOS keyboard animation finishes
+  useEffect(() => {
+    if (!open) return;
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+    const t1 = setTimeout(() => { el.scrollIntoView({ block: 'center', behavior: 'auto' }); }, 50);
+    const t2 = setTimeout(() => { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 400);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [open]);
   if (!open) return null;
   const submit = () => { if (name.trim()) { onSave(name.trim()); onClose(); } };
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-[12vh]" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/70 fadeIn" />
+    <>
+      <div className="fixed inset-0 z-40 bg-black/70 fadeIn" onClick={onClose} />
       <div
-        className="relative w-full max-w-[340px] bg-[var(--color-grouped-bg)] rounded-2xl slideIn overflow-hidden border border-white/10"
+        className="fixed z-50 bg-[var(--color-grouped-bg)] rounded-2xl overflow-hidden border border-white/10 fadeIn"
+        style={{
+          top: `calc(env(safe-area-inset-top) + 56px)`,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: 'calc(100vw - 32px)',
+          maxWidth: 340,
+        }}
         onClick={e => e.stopPropagation()}
       >
         <div className="p-5 text-center">
           <div className="text-[17px] font-semibold">Save session</div>
-          <div className="text-[13px] text-[var(--color-secondary)] mt-1">Give it a name to find it in your library.</div>
           <input
-            autoFocus
+            ref={inputRef}
             type="text"
             value={name}
             onChange={e => setName(e.target.value)}
@@ -573,7 +591,7 @@ function SaveDialog({ open, defaultName, onClose, onSave }) {
           <button type="button" onClick={submit} disabled={!name.trim()} className="press flex-1 h-11 text-[15px] font-semibold text-[var(--color-accent)] disabled:opacity-30">Save</button>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
