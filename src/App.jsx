@@ -4,6 +4,11 @@ import {
   Volume2, VolumeX, Plus, Minus, X, Sliders, Bookmark, Trash2,
 } from 'lucide-react';
 
+// Boxing bell samples (Vite resolves these to hashed URLs at build time)
+import goSampleUrl from './assets/sounds/go.mp3?url';
+import endSampleUrl from './assets/sounds/end.mp3?url';
+import completeSampleUrl from './assets/sounds/complete.mp3?url';
+
 // =============================================================================
 // DATA — preset configs
 // =============================================================================
@@ -201,10 +206,44 @@ function getCtx() {
   if (!_ctx) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (AC) _ctx = new AC();
+    if (_ctx) ensureSamplesLoaded();
   }
   if (_ctx?.state === 'suspended') _ctx.resume();
   return _ctx;
 }
+
+// --- Sampled boxing bells ---
+const _buffers = {};
+let _bufferLoadStarted = false;
+async function _decode(url, key) {
+  const ctx = getCtx();
+  if (!ctx) return;
+  try {
+    const res = await fetch(url);
+    const arr = await res.arrayBuffer();
+    _buffers[key] = await ctx.decodeAudioData(arr);
+  } catch (e) { /* sample unavailable; fall back to synth */ }
+}
+function ensureSamplesLoaded() {
+  if (_bufferLoadStarted) return;
+  _bufferLoadStarted = true;
+  _decode(goSampleUrl, 'go');
+  _decode(endSampleUrl, 'end');
+  _decode(completeSampleUrl, 'complete');
+}
+function playSample(key, { gain = 1, delay = 0, rate = 1 } = {}) {
+  const ctx = getCtx();
+  if (!ctx || !_buffers[key]) return false;
+  const src = ctx.createBufferSource();
+  src.buffer = _buffers[key];
+  src.playbackRate.value = rate;
+  const g = ctx.createGain();
+  g.gain.value = gain;
+  src.connect(g); g.connect(ctx.destination);
+  src.start(ctx.currentTime + delay);
+  return true;
+}
+
 // --- Sound primitives: percussive athletic palette ---
 
 // Cached white-noise buffer
@@ -274,35 +313,42 @@ const cues = {
     const freq = { 3: 700, 2: 900, 1: 1150 }[n] ?? 700;
     crack({ freq, q: 6, decay: 0.06, gain: 0.45 });
   },
-  // Punchy round start — kick thump + bright crack + tonal confirmation
+  // Round start — real boxing bell sample (with synth thump for body)
   go() {
-    thump({ start: 160, end: 55, decay: 0.22, gain: 0.7 });
-    crack({ freq: 3500, q: 1.2, decay: 0.14, gain: 0.55 });
-    blip({ freq: 660, decay: 0.18, gain: 0.35, delay: 0.005 });
-    blip({ freq: 990, decay: 0.18, gain: 0.28, delay: 0.005 });
+    if (!playSample('go', { gain: 0.95 })) {
+      thump({ start: 160, end: 55, decay: 0.22, gain: 0.7 });
+      crack({ freq: 3500, q: 1.2, decay: 0.14, gain: 0.55 });
+      blip({ freq: 660, decay: 0.18, gain: 0.35, delay: 0.005 });
+      blip({ freq: 990, decay: 0.18, gain: 0.28, delay: 0.005 });
+    }
   },
   // Sharp warning at T-3 — short rim-shot tick (no tonal ring)
   warning3sec() {
     crack({ freq: 4500, q: 2.5, decay: 0.05, gain: 0.55 });
   },
-  // Slot change — snare-style crack + brief bell remnant
+  // Slot change — snare-style crack + brief bell remnant. Kept synth: plays many
+  // times per session, so a short, distinct, NON-bell hit is the right vibe.
   transition() {
     crack({ freq: 2800, q: 1.4, decay: 0.12, gain: 0.55 });
     blip({ freq: 1320, decay: 0.18, gain: 0.32, delay: 0.01 });
   },
-  // Halfway switch — descending sweep, distinct from transition
+  // Halfway switch — end-of-round bell sample played slightly faster for a
+  // distinct mid-set ping. Falls back to synth descending sweep.
   halfway() {
-    crack({ freq: 1600, q: 1.0, decay: 0.16, gain: 0.45 });
-    blip({ freq: 880, decay: 0.22, gain: 0.4, delay: 0.02 });
-    blip({ freq: 660, decay: 0.28, gain: 0.3, delay: 0.08 });
+    if (!playSample('end', { gain: 0.85, rate: 1.15 })) {
+      crack({ freq: 1600, q: 1.0, decay: 0.16, gain: 0.45 });
+      blip({ freq: 880, decay: 0.22, gain: 0.4, delay: 0.02 });
+      blip({ freq: 660, decay: 0.28, gain: 0.3, delay: 0.08 });
+    }
   },
-  // Entering rest — warm low pad, low intensity
+  // Entering rest — warm low pad, low intensity. Synth (samples would be too dramatic here).
   enterRest() {
     crack({ freq: 600, q: 0.8, decay: 0.3, gain: 0.35, type: 'lowpass' });
     blip({ freq: 330, decay: 0.4, gain: 0.3, delay: 0.02 });
   },
-  // Session complete — two-hit rhythmic chord + kick
+  // Session complete — 3-hit boxing bell finale sample, falls back to synth chord.
   complete() {
+    if (playSample('complete', { gain: 0.95 })) return;
     thump({ start: 140, end: 50, decay: 0.25, gain: 0.6 });
     crack({ freq: 3500, q: 1.2, decay: 0.15, gain: 0.5 });
     blip({ freq: 523, decay: 0.4, gain: 0.32 });
