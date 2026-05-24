@@ -326,29 +326,36 @@ function getShaper() {
   _shaper = ws;
   return ws;
 }
-function beep({ freq = 1000, duration = 0.18, gain = 0.85, delay = 0 }) {
+function beep({ freq = 1000, duration = 0.18, gain = 0.85, delay = 0, cutoff = 2200 }) {
   const ctx = getCtx(); if (!ctx) return;
   const now = ctx.currentTime + delay;
+  // Sine + small amount of square for body and harmonic interest, low-pass filtered
+  // to kill the brittle high partials.
+  const sine = ctx.createOscillator(); sine.type = 'sine'; sine.frequency.value = freq;
   const sq = ctx.createOscillator(); sq.type = 'square'; sq.frequency.value = freq;
-  const sw = ctx.createOscillator(); sw.type = 'sawtooth'; sw.frequency.value = freq;
-  const mix = ctx.createGain();
-  mix.gain.value = 0.7;
-  sq.connect(mix); sw.connect(mix);
-  const ws = getShaper();
+  const sineG = ctx.createGain(); sineG.gain.value = 0.85;
+  const sqG = ctx.createGain(); sqG.gain.value = 0.3;
+  sine.connect(sineG); sq.connect(sqG);
+  const mix = ctx.createGain(); mix.gain.value = 1;
+  sineG.connect(mix); sqG.connect(mix);
+  const filt = ctx.createBiquadFilter();
+  filt.type = 'lowpass';
+  filt.frequency.value = cutoff;
+  filt.Q.value = 0.7;
   const env = ctx.createGain();
   env.gain.setValueAtTime(0, now);
-  env.gain.linearRampToValueAtTime(gain, now + 0.003);
-  env.gain.setValueAtTime(gain, now + duration - 0.012);
+  env.gain.linearRampToValueAtTime(gain, now + 0.006);
+  env.gain.setValueAtTime(gain, now + duration - 0.04);
   env.gain.linearRampToValueAtTime(0, now + duration);
-  mix.connect(ws); ws.connect(env); env.connect(ctx.destination);
-  sq.start(now); sw.start(now);
-  sq.stop(now + duration + 0.02); sw.stop(now + duration + 0.02);
+  mix.connect(filt); filt.connect(env); env.connect(ctx.destination);
+  sine.start(now); sq.start(now);
+  sine.stop(now + duration + 0.02); sq.stop(now + duration + 0.02);
 }
 
 const cues = {
-  // LOUD 3-2-1 countdown beeps — square+saw, soft-clipped, full attack/sustain
+  // 3-2-1 countdown beeps — warmer mid-range tone, loud but not piercing
   preTick(n) {
-    beep({ freq: 1175, duration: 0.18, gain: 0.95 });
+    beep({ freq: 740, duration: 0.18, gain: 0.9, cutoff: 2200 });
   },
   // Round start — real boxing bell sample (synth fallback)
   go() {
@@ -357,9 +364,9 @@ const cues = {
       beep({ freq: 880, duration: 0.4, gain: 1.0 });
     }
   },
-  // 10s heads-up — single LOWER-pitched longer buzzer. Unmistakable.
+  // 10s heads-up — single longer warm tone, lower than the countdown
   warning10sec() {
-    beep({ freq: 520, duration: 0.5, gain: 0.95 });
+    beep({ freq: 440, duration: 0.55, gain: 0.9, cutoff: 1600 });
   },
   // Slot change — boxing bell sample at high gain
   transition() {
