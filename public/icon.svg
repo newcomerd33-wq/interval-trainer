@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#09090b"/>
+  <g transform="translate(256 256)">
+    <circle r="172" fill="none" stroke="#27272a" stroke-width="20"/>
+    <path d="M 0 -172 A 172 172 0 0 1 148.96 86 L 0 0 Z" fill="#fbbf24"/>
+    <circle r="172" fill="none" stroke="#fbbf24" stroke-width="20" stroke-dasharray="9 18" stroke-linecap="round" transform="rotate(-90)"/>
+    <text x="0" y="22" text-anchor="middle" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-weight="800" font-size="120" fill="#fafafa" letter-spacing="-4">IT</text>
+  </g>
+</svg>

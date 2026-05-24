@@ -1,5 +1,5 @@
 {
-  "name": "interval-explorer",
+  "name": "interval-trainer",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -15,6 +15,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "sharp": "^0.34.5",
     "tailwindcss": "^4.0.0",
     "vite": "^6.0.0"
   }

@@ -1,4 +1,4 @@
-# Interval Explorer
+# Interval Trainer
 
 Interval-based lifting program builder + live workout timer.
 
@@ -15,7 +15,7 @@ npm run preview      # serve dist/ locally
 
 ## Deploy to GitHub Pages
 
-1. Create a new GitHub repo (suggested name: `interval-explorer`).
+1. Create a new GitHub repo (suggested name: `interval-trainer`).
 2. In **Settings → Pages**, set **Source** to **GitHub Actions**.
 3. Push this folder:
    ```bash
@@ -23,10 +23,10 @@ npm run preview      # serve dist/ locally
    git add .
    git commit -m "Initial commit"
    git branch -M main
-   git remote add origin https://github.com/<your-username>/interval-explorer.git
+   git remote add origin https://github.com/<your-username>/interval-trainer.git
    git push -u origin main
    ```
-4. The included workflow (`.github/workflows/deploy.yml`) builds and deploys on every push to `main`. URL will be `https://<your-username>.github.io/interval-explorer/`.
+4. The included workflow (`.github/workflows/deploy.yml`) builds and deploys on every push to `main`. URL will be `https://<your-username>.github.io/interval-trainer/`.
 
 `vite.config.js` uses `base: './'` so the app works at any subpath — no edits needed when renaming the repo.
 
