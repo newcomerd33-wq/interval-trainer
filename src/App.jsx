@@ -1,18 +1,34 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 
 // =============================================================================
-// DATA: All 99 valid configurations
+// DATA: Valid (duration, interval, slots-per-round, rounds) templates
 // =============================================================================
 const TEMPLATES = [
-  [15, 75, 2, 6], [15, 75, 3, 4], [15, 75, 4, 3], [15, 90, 2, 5],
-  [20, 75, 2, 8], [20, 75, 4, 4], [20, 120, 2, 5],
+  // 45s base
+  [15, 45, 2, 10], [15, 45, 4, 5], [15, 45, 5, 4],
+  [30, 45, 4, 10], [30, 45, 5, 8], [30, 45, 8, 5],
+  [45, 45, 4, 15], [45, 45, 5, 12], [45, 45, 6, 10],
+  [60, 45, 8, 10],
+  // 60s base
+  [15, 60, 3, 5], [15, 60, 5, 3],
+  [20, 60, 2, 10], [20, 60, 4, 5], [20, 60, 5, 4],
+  [30, 60, 2, 15], [30, 60, 3, 10], [30, 60, 5, 6], [30, 60, 6, 5],
+  [45, 60, 3, 15], [45, 60, 5, 9],
+  [60, 60, 4, 15], [60, 60, 5, 12], [60, 60, 6, 10],
+  // 75s base
+  [15, 75, 2, 6], [15, 75, 3, 4], [15, 75, 4, 3],
+  [20, 75, 2, 8], [20, 75, 4, 4],
   [30, 75, 2, 12], [30, 75, 3, 8], [30, 75, 4, 6], [30, 75, 6, 4], [30, 75, 8, 3],
-  [30, 90, 2, 10], [30, 90, 4, 5], [30, 90, 5, 4],
-  [30, 120, 3, 5], [30, 120, 5, 3],
   [45, 75, 3, 12], [45, 75, 4, 9], [45, 75, 6, 6],
-  [45, 90, 2, 15], [45, 90, 3, 10], [45, 90, 5, 6], [45, 90, 6, 5],
   [60, 75, 4, 12], [60, 75, 6, 8], [60, 75, 8, 6],
+  // 90s base
+  [15, 90, 2, 5],
+  [30, 90, 2, 10], [30, 90, 4, 5], [30, 90, 5, 4],
+  [45, 90, 2, 15], [45, 90, 3, 10], [45, 90, 5, 6], [45, 90, 6, 5],
   [60, 90, 4, 10], [60, 90, 5, 8], [60, 90, 8, 5],
+  // 120s base
+  [20, 120, 2, 5],
+  [30, 120, 3, 5], [30, 120, 5, 3],
   [60, 120, 2, 15], [60, 120, 3, 10], [60, 120, 5, 6], [60, 120, 6, 5],
 ];
 
@@ -31,7 +47,7 @@ const CONFIGS = TEMPLATES.flatMap(([duration, intervalSec, slots, sets], tIdx) =
     bilateral: b, unilateral: u,
     totalEx: b + u,
     cycleSec: slots * intervalSec,
-    totalIntervals: slots * sets,
+    totalSets: (b + u) * sets,
   }))
 );
 
@@ -68,6 +84,8 @@ function expandBlocksToSlots(blocks) {
   for (const block of blocks) {
     if (block.type === 'B') {
       slots.push({ name: block.name, side: null });
+    } else if (block.type === 'A') {
+      slots.push({ name: block.name, side: null, alternating: true });
     } else {
       slots.push({ name: block.name, side: 'Left' });
       slots.push({ name: block.name, side: 'Right' });
@@ -144,19 +162,22 @@ function Metric({ label, value }) {
 }
 
 function SlotStrip({ blocks }) {
-  const slots = blocks.flatMap(block =>
-    block.type === 'B' ? [{ t: 'B' }] : [{ t: 'L' }, { t: 'R' }]
-  );
+  const slots = blocks.flatMap(block => {
+    if (block.type === 'B') return [{ t: 'B' }];
+    if (block.type === 'A') return [{ t: 'A' }];
+    return [{ t: 'L' }, { t: 'R' }];
+  });
+  const styleFor = (t) => {
+    if (t === 'B') return 'bg-zinc-800 text-zinc-200 border-zinc-700';
+    if (t === 'A') return 'bg-cyan-950 text-cyan-300 border-cyan-800';
+    return 'bg-amber-950 text-amber-300 border-amber-800';
+  };
   return (
     <div className="flex gap-0.5 flex-wrap">
       {slots.map((slot, idx) => (
         <div
           key={idx}
-          className={`w-7 h-7 flex items-center justify-center font-mono text-[10px] font-bold ${
-            slot.t === 'B'
-              ? 'bg-zinc-800 text-zinc-200 border border-zinc-700'
-              : 'bg-amber-950 text-amber-300 border border-amber-800'
-          }`}
+          className={`w-7 h-7 flex items-center justify-center font-mono text-[10px] font-bold border ${styleFor(slot.t)}`}
         >
           {slot.t}
         </div>
@@ -180,7 +201,7 @@ function BackButton({ onClick, label = 'Back' }) {
 // BROWSE VIEW
 // =============================================================================
 function ConfigCard({ config, onSelect }) {
-  const { id, duration, intervalSec, slots, sets, bilateral, unilateral, totalEx, cycleSec, totalIntervals } = config;
+  const { id, duration, intervalSec, slots, sets, bilateral, unilateral, totalEx, cycleSec, totalSets } = config;
   const previewBlocks = useMemo(() => generateInitialBlocks(bilateral, unilateral), [bilateral, unilateral]);
 
   return (
@@ -200,7 +221,7 @@ function ConfigCard({ config, onSelect }) {
       <div className="grid grid-cols-3 gap-3 px-4 py-4 border-b border-zinc-800/60">
         <Metric label="Format" value={`${slots} × ${sets}`} />
         <Metric label="Cycle time" value={formatCycle(cycleSec)} />
-        <Metric label="Total sets" value={totalIntervals} />
+        <Metric label="Total sets" value={totalSets} />
       </div>
       <div className="px-4 py-4 flex items-end justify-between gap-3">
         <div className="flex-1 min-w-0">
@@ -249,8 +270,8 @@ function BrowseView({ onSelectConfig }) {
           Interval Configuration Explorer
         </h1>
         <p className="text-sm text-zinc-400 mt-2 max-w-xl leading-relaxed">
-          All 99 valid interval-based lifting structures across 15, 20, 30, 45, and 60-minute sessions.
-          Tap a config to configure and start a timed workout.
+          Every interval-based lifting structure that fits cleanly into 15, 20, 30, 45, or 60-minute sessions across 45s, 60s, 75s, 90s, and 120s base intervals.
+          Tap a config to set exercise order and start a timed workout.
         </p>
       </div>
 
@@ -263,7 +284,7 @@ function BrowseView({ onSelectConfig }) {
         </FilterGroup>
         <FilterGroup label="Interval">
           <PillButton active={intervalSec === 'all'} onClick={() => setIntervalSec('all')}>All</PillButton>
-          {[75, 90, 120].map(i => (
+          {[45, 60, 75, 90, 120].map(i => (
             <PillButton key={i} active={intervalSec === i} onClick={() => setIntervalSec(i)}>{i}s</PillButton>
           ))}
         </FilterGroup>
@@ -320,16 +341,26 @@ function BrowseView({ onSelectConfig }) {
 // =============================================================================
 // CONFIGURE VIEW
 // =============================================================================
-function BlockEditor({ block, idx, total, onMoveUp, onMoveDown, onRename }) {
+function BlockEditor({ block, idx, total, onMoveUp, onMoveDown, onRename, onToggleType }) {
+  const isU = block.type === 'U';
+  const isA = block.type === 'A';
+  const badgeStyle = isU
+    ? 'text-amber-300 border-amber-800 bg-amber-950 cursor-default'
+    : isA
+    ? 'text-cyan-300 border-cyan-800 bg-cyan-950 hover:border-cyan-600'
+    : 'text-zinc-300 border-zinc-700 bg-zinc-800 hover:border-zinc-500';
+  const badgeLabel = isU ? 'Unilateral' : isA ? 'Alternating' : 'Bilateral';
   return (
     <div className="border border-zinc-800 bg-zinc-900/40 p-3 flex items-center gap-3">
-      <div className={`font-mono text-[10px] uppercase tracking-widest px-2 py-1 border ${
-        block.type === 'B'
-          ? 'text-zinc-300 border-zinc-700 bg-zinc-800'
-          : 'text-amber-300 border-amber-800 bg-amber-950'
-      }`}>
-        {block.type === 'B' ? 'Bilateral' : 'Unilateral'}
-      </div>
+      <button
+        type="button"
+        onClick={isU ? undefined : onToggleType}
+        disabled={isU}
+        title={isU ? 'Per-side unilateral (occupies 2 slots)' : 'Tap to toggle bilateral ↔ alternating L/R'}
+        className={`font-mono text-[10px] uppercase tracking-widest px-2 py-1 border transition-colors ${badgeStyle}`}
+      >
+        {badgeLabel}
+      </button>
       <input
         type="text"
         value={block.name}
@@ -366,7 +397,15 @@ function ConfigureView({ config, blocks, setBlocks, onBack, onStart }) {
     newBlocks[idx] = { ...newBlocks[idx], name };
     setBlocks(newBlocks);
   };
+  const toggleType = (idx) => {
+    const newBlocks = [...blocks];
+    const current = newBlocks[idx];
+    if (current.type === 'U') return;
+    newBlocks[idx] = { ...current, type: current.type === 'B' ? 'A' : 'B' };
+    setBlocks(newBlocks);
+  };
   const previewSlots = expandBlocksToSlots(blocks);
+  const altCount = blocks.filter(b => b.type === 'A').length;
 
   return (
     <>
@@ -379,7 +418,7 @@ function ConfigureView({ config, blocks, setBlocks, onBack, onStart }) {
           {config.duration} min · {config.intervalSec}s · {config.slots} × {config.sets}
         </h1>
         <div className="text-sm text-zinc-400 mt-2">
-          {describeMix(config.bilateral, config.unilateral)} · cycle {formatCycle(config.cycleSec)} · {config.totalIntervals} total sets
+          {describeMix(config.bilateral, config.unilateral)} · cycle {formatCycle(config.cycleSec)} · {config.totalSets} total sets
         </div>
       </div>
 
@@ -397,6 +436,7 @@ function ConfigureView({ config, blocks, setBlocks, onBack, onStart }) {
               onMoveUp={() => moveBlock(idx, -1)}
               onMoveDown={() => moveBlock(idx, 1)}
               onRename={(name) => updateName(idx, name)}
+              onToggleType={() => toggleType(idx)}
             />
           ))}
         </div>
@@ -407,18 +447,23 @@ function ConfigureView({ config, blocks, setBlocks, onBack, onStart }) {
           Round sequence preview
         </div>
         <div className="flex flex-wrap gap-1 mb-3">
-          {previewSlots.map((slot, idx) => (
-            <div key={idx} className={`px-2 py-1 text-xs font-mono border ${
-              slot.side
-                ? 'border-amber-800 bg-amber-950 text-amber-300'
-                : 'border-zinc-700 bg-zinc-800 text-zinc-200'
-            }`}>
-              {slot.name}{slot.side ? ` (${slot.side[0]})` : ''}
-            </div>
-          ))}
+          {previewSlots.map((slot, idx) => {
+            const style = slot.alternating
+              ? 'border-cyan-800 bg-cyan-950 text-cyan-300'
+              : slot.side
+              ? 'border-amber-800 bg-amber-950 text-amber-300'
+              : 'border-zinc-700 bg-zinc-800 text-zinc-200';
+            const suffix = slot.alternating ? ' (alt L/R)' : slot.side ? ` (${slot.side[0]})` : '';
+            return (
+              <div key={idx} className={`px-2 py-1 text-xs font-mono border ${style}`}>
+                {slot.name}{suffix}
+              </div>
+            );
+          })}
         </div>
         <div className="text-[10px] text-zinc-500 font-mono">
           This sequence repeats {config.sets} times.
+          {altCount > 0 && <span className="text-cyan-400 ml-2">· {altCount} alternating</span>}
         </div>
       </div>
 
@@ -575,7 +620,7 @@ function TimerView({ config, blocks, onBack }) {
           </div>
           <div className="text-3xl font-bold text-zinc-100 mb-1">Done.</div>
           <div className="text-sm text-zinc-400 font-mono">
-            {totalSlots} sets · {config.duration} minutes
+            {config.totalSets} sets · {config.duration} minutes
           </div>
         </div>
       )}
@@ -592,6 +637,11 @@ function TimerView({ config, blocks, onBack }) {
                 {currentSlot.side} side
               </div>
             )}
+            {currentSlot.alternating && (
+              <div className="text-xl font-mono text-cyan-400 uppercase tracking-wider mt-1">
+                Alternate L / R
+              </div>
+            )}
             <div className="mt-6 flex items-baseline gap-3">
               <div className="text-7xl sm:text-8xl font-mono font-bold text-amber-400 tabular-nums">
                 {secondsLeft}
@@ -604,7 +654,9 @@ function TimerView({ config, blocks, onBack }) {
             <div className="border border-zinc-800 bg-zinc-900/20 p-4 mb-4">
               <div className="text-[10px] font-mono uppercase tracking-widest text-zinc-500 mb-1">Next</div>
               <div className="text-lg text-zinc-300">
-                {nextSlot.name}{nextSlot.side && <span className="text-amber-400/80 ml-2">({nextSlot.side})</span>}
+                {nextSlot.name}
+                {nextSlot.side && <span className="text-amber-400/80 ml-2">({nextSlot.side})</span>}
+                {nextSlot.alternating && <span className="text-cyan-400/80 ml-2">(alt L/R)</span>}
               </div>
             </div>
           )}
