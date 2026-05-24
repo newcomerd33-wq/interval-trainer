@@ -207,6 +207,13 @@ function getCtx() {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (AC) _ctx = new AC();
     if (_ctx) ensureSamplesLoaded();
+    // Audio Session API: 'transient' tells iOS to briefly duck other audio (e.g. Spotify)
+    // while our cues play. Supported in Safari 16.4+ and Chromium 116+ behind a flag.
+    try {
+      if (navigator.audioSession && navigator.audioSession.type !== 'transient') {
+        navigator.audioSession.type = 'transient';
+      }
+    } catch {}
   }
   if (_ctx?.state === 'suspended') _ctx.resume();
   return _ctx;
