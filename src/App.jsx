@@ -598,6 +598,65 @@ function SaveDialog({ open, defaultName, onClose, onSave }) {
 // =============================================================================
 // CONFIGURE (preset)
 // =============================================================================
+function CenterCard({ open, onClose, children, maxWidth = 340 }) {
+  if (!open) return null;
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/70 fadeIn" onClick={onClose} />
+      <div
+        className="fixed z-50 bg-[var(--color-grouped-bg)] rounded-2xl overflow-hidden border border-white/10 fadeIn"
+        style={{
+          top: `calc(env(safe-area-inset-top) + 56px)`,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: 'calc(100vw - 32px)',
+          maxWidth,
+        }}
+        onClick={e => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </>
+  );
+}
+
+function SavePromptDialog({ open, originalName, onClose, onUpdate, onSaveAsNew }) {
+  return (
+    <CenterCard open={open} onClose={onClose}>
+      <div className="p-5 text-center">
+        <div className="text-[17px] font-semibold">Save changes</div>
+        <div className="text-[13px] text-[var(--color-secondary)] mt-1">
+          You loaded <span className="text-white">{originalName}</span>.
+          Update it, or save as a new entry?
+        </div>
+      </div>
+      <div className="flex flex-col border-t border-white/10 divide-y divide-white/10">
+        <button type="button" onClick={onUpdate} className="press h-11 text-[15px] text-[var(--color-accent)] font-semibold">Update “{originalName}”</button>
+        <button type="button" onClick={onSaveAsNew} className="press h-11 text-[15px] text-[var(--color-accent)]">Save as new</button>
+        <button type="button" onClick={onClose} className="press h-11 text-[15px] text-[var(--color-secondary)]">Cancel</button>
+      </div>
+    </CenterCard>
+  );
+}
+
+function ConfirmDeleteDialog({ open, itemName, onClose, onConfirm }) {
+  return (
+    <CenterCard open={open} onClose={onClose}>
+      <div className="p-5 text-center">
+        <div className="text-[17px] font-semibold">Delete saved session?</div>
+        <div className="text-[13px] text-[var(--color-secondary)] mt-1">
+          <span className="text-white">{itemName}</span> will be removed from your library. This can’t be undone.
+        </div>
+      </div>
+      <div className="flex border-t border-white/10">
+        <button type="button" onClick={onClose} className="press flex-1 h-11 text-[15px] text-[var(--color-accent)]">Cancel</button>
+        <div className="w-px bg-white/10" />
+        <button type="button" onClick={onConfirm} className="press flex-1 h-11 text-[15px] text-red-400 font-semibold">Delete</button>
+      </div>
+    </CenterCard>
+  );
+}
+
 function BlockRow({ block, idx, total, onMoveUp, onMoveDown, onRename, onToggleType }) {
   const isU = block.type === 'U';
   const isA = block.type === 'A';
@@ -866,17 +925,10 @@ function CustomBuilderView({ session, setSession, onBack, onStart, onSave }) {
 // =============================================================================
 // LIBRARY VIEW
 // =============================================================================
-function LibraryView({ items, onClose, onLoad, onDelete }) {
-  const [editing, setEditing] = useState(false);
+function LibraryView({ items, onClose, onLoad, onRequestDelete }) {
   return (
     <div className="slideIn pb-8">
-      <NavBar
-        title="Saved"
-        leftLabel="Done"
-        onLeft={onClose}
-        rightLabel={items.length > 0 ? (editing ? 'Done' : 'Edit') : null}
-        onRight={items.length > 0 ? () => setEditing(v => !v) : null}
-      />
+      <NavBar title="Saved" leftLabel="Done" onLeft={onClose} />
 
       {items.length === 0 ? (
         <div className="px-4 mt-12 text-center">
@@ -903,21 +955,31 @@ function LibraryView({ items, onClose, onLoad, onDelete }) {
                 sub = `Custom · ${built.durationMin} min · ${built.totalSets} sets · ${item.custom.circuits.length} circuit${item.custom.circuits.length > 1 ? 's' : ''}`;
               }
               return (
-                <Row
-                  key={item.id}
-                  onClick={editing ? undefined : () => onLoad(item)}
-                  subtitle={sub}
-                  trailing={editing ? (
-                    <button type="button" onClick={() => onDelete(item.id)} className="press w-8 h-8 rounded-md text-red-400 hover:bg-red-500/10 flex items-center justify-center">
-                      <Trash2 size={15} strokeWidth={2.2} />
-                    </button>
-                  ) : null}
-                >
-                  {item.name}
-                </Row>
+                <div key={item.id} className="sep-row flex items-center min-h-[60px] pr-2">
+                  <button
+                    type="button"
+                    onClick={() => onLoad(item)}
+                    className="press flex-1 min-w-0 text-left flex items-center px-4 py-2.5 active:bg-[var(--color-cell-pressed)] rounded-l-lg"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[17px] text-white">{item.name}</div>
+                      <div className="text-[13px] text-[var(--color-secondary)] mt-0.5">{sub}</div>
+                    </div>
+                    <ChevronRight size={16} strokeWidth={2} className="text-[var(--color-tertiary)] ml-3 shrink-0" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onRequestDelete(item)}
+                    aria-label={`Delete ${item.name}`}
+                    className="press w-10 h-10 rounded-full text-red-400 active:bg-red-500/10 flex items-center justify-center shrink-0 ml-1"
+                  >
+                    <Trash2 size={16} strokeWidth={2.2} />
+                  </button>
+                </div>
               );
             })}
           </Group>
+          <GroupFooter>Tap a saved session to load it. Trash icon deletes.</GroupFooter>
         </>
       )}
     </div>
@@ -1203,6 +1265,9 @@ export default function App() {
   const [customSession, setCustomSession] = useState(null);
   const [library, setLibrary] = useState(() => loadLibrary());
   const [saveOpen, setSaveOpen] = useState(false);
+  const [loadedFromId, setLoadedFromId] = useState(null);
+  const [savePromptOpen, setSavePromptOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(null);
 
   const persist = (next) => { setLibrary(next); persistLibrary(next); };
 
@@ -1211,6 +1276,7 @@ export default function App() {
     setCustomSession(null);
     setPresetConfig(config);
     setPresetBlocks(makeBlocks(config.bilateral, config.unilateral));
+    setLoadedFromId(null);
     setView('configure');
   };
   const pickCustom = () => {
@@ -1218,10 +1284,12 @@ export default function App() {
     setPresetConfig(null);
     setPresetBlocks([]);
     setCustomSession(emptyCustom());
+    setLoadedFromId(null);
     setView('customBuilder');
   };
   const openLibrary = () => setView('library');
   const closeLibrary = () => setView('wizard');
+  const goBackToWizard = () => { setLoadedFromId(null); setView('wizard'); };
 
   const loadFromLibrary = (item) => {
     if (item.sourceType === 'preset') {
@@ -1231,16 +1299,52 @@ export default function App() {
       setCustomSession(null);
       setPresetConfig(cfg);
       setPresetBlocks(item.blocks.map(b => ({ ...b, id: uid() })));
+      setLoadedFromId(item.id);
       setView('configure');
     } else {
       setMode('custom');
       setPresetConfig(null);
       setPresetBlocks([]);
       setCustomSession(JSON.parse(JSON.stringify(item.custom)));
+      setLoadedFromId(item.id);
       setView('customBuilder');
     }
   };
-  const deleteFromLibrary = (id) => persist(library.filter(i => i.id !== id));
+
+  const requestDelete = (item) => setPendingDelete(item);
+  const confirmDelete = () => {
+    if (!pendingDelete) return;
+    persist(library.filter(i => i.id !== pendingDelete.id));
+    if (pendingDelete.id === loadedFromId) setLoadedFromId(null);
+    setPendingDelete(null);
+  };
+
+  const triggerSave = () => {
+    if (loadedFromId && library.some(i => i.id === loadedFromId)) {
+      setSavePromptOpen(true);
+    } else {
+      setSaveOpen(true);
+    }
+  };
+
+  const updateCurrent = () => {
+    if (!loadedFromId) return;
+    const next = library.map(i => {
+      if (i.id !== loadedFromId) return i;
+      const patch = { savedAt: Date.now() };
+      if (mode === 'preset' && presetConfig) {
+        patch.sourceType = 'preset';
+        patch.configId = presetConfig.id;
+        patch.blocks = presetBlocks.map(b => ({ type: b.type, name: b.name }));
+      } else if (mode === 'custom' && customSession) {
+        patch.sourceType = 'custom';
+        patch.custom = JSON.parse(JSON.stringify(customSession));
+      }
+      return { ...i, ...patch };
+    });
+    persist(next);
+    setSavePromptOpen(false);
+  };
 
   const saveCurrent = (name) => {
     let item;
@@ -1258,8 +1362,13 @@ export default function App() {
         custom: JSON.parse(JSON.stringify(customSession)),
       };
     }
-    if (item) persist([item, ...library]);
+    if (item) {
+      persist([item, ...library]);
+      setLoadedFromId(item.id);
+    }
   };
+
+  const originalName = library.find(i => i.id === loadedFromId)?.name || '';
 
   const defaultName = mode === 'preset' && presetConfig
     ? `${presetConfig.duration}m · ${presetConfig.totalEx} ex × ${presetConfig.sets}`
@@ -1282,25 +1391,25 @@ export default function App() {
           <Wizard onPickConfig={pickPreset} onPickCustom={pickCustom} onOpenLibrary={openLibrary} libraryCount={library.length} />
         )}
         {view === 'library' && (
-          <LibraryView items={library} onClose={closeLibrary} onLoad={loadFromLibrary} onDelete={deleteFromLibrary} />
+          <LibraryView items={library} onClose={closeLibrary} onLoad={loadFromLibrary} onRequestDelete={requestDelete} />
         )}
         {view === 'configure' && presetConfig && (
           <ConfigureView
             config={presetConfig}
             blocks={presetBlocks}
             setBlocks={setPresetBlocks}
-            onBack={() => setView('wizard')}
+            onBack={goBackToWizard}
             onStart={() => setView('timer')}
-            onSave={() => setSaveOpen(true)}
+            onSave={triggerSave}
           />
         )}
         {view === 'customBuilder' && customSession && (
           <CustomBuilderView
             session={customSession}
             setSession={setCustomSession}
-            onBack={() => setView('wizard')}
+            onBack={goBackToWizard}
             onStart={() => setView('timer')}
-            onSave={() => setSaveOpen(true)}
+            onSave={triggerSave}
           />
         )}
         {view === 'timer' && session && (
@@ -1310,6 +1419,19 @@ export default function App() {
           />
         )}
         <SaveDialog open={saveOpen} defaultName={defaultName} onClose={() => setSaveOpen(false)} onSave={saveCurrent} />
+        <SavePromptDialog
+          open={savePromptOpen}
+          originalName={originalName}
+          onClose={() => setSavePromptOpen(false)}
+          onUpdate={updateCurrent}
+          onSaveAsNew={() => { setSavePromptOpen(false); setSaveOpen(true); }}
+        />
+        <ConfirmDeleteDialog
+          open={!!pendingDelete}
+          itemName={pendingDelete?.name || ''}
+          onClose={() => setPendingDelete(null)}
+          onConfirm={confirmDelete}
+        />
       </div>
     </div>
   );
