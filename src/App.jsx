@@ -589,9 +589,6 @@ function TimerView({ config, blocks, onBack }) {
   const nextSlot = currentIdx + 1 < totalSlots ? slots[(currentIdx + 1) % slots.length] : null;
   const currentSet = isComplete ? config.sets : Math.floor(currentIdx / slots.length) + 1;
   const slotInRound = isComplete ? slots.length : (currentIdx % slots.length) + 1;
-  const currentIsCombined = !!currentSlot?.combined;
-  const halfwayMark = currentSlot ? Math.ceil(currentSlot.duration / 2) : 0;
-  const pastHalfway = currentIsCombined && secondsLeft <= halfwayMark;
 
   // Pre-countdown
   useEffect(() => {
@@ -753,11 +750,6 @@ function TimerView({ config, blocks, onBack }) {
             {currentSlot.alternating && (
               <div className="text-xl font-mono text-cyan-400 uppercase tracking-wider mt-1">
                 Alternate L / R
-              </div>
-            )}
-            {currentSlot.combined && (
-              <div className="text-xl font-mono text-fuchsia-400 uppercase tracking-wider mt-1">
-                {pastHalfway ? <span>Right side <span className="text-zinc-500">· L done</span></span> : <span><span className="text-zinc-500">Left first ·</span> switch at {halfwayMark}s</span>}
               </div>
             )}
             <div className="mt-6 flex items-baseline gap-3">
