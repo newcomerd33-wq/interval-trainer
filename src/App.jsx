@@ -545,24 +545,35 @@ function SaveDialog({ open, defaultName, onClose, onSave }) {
   const [name, setName] = useState('');
   useEffect(() => { if (open) setName(defaultName || ''); }, [open, defaultName]);
   if (!open) return null;
+  const submit = () => { if (name.trim()) { onSave(name.trim()); onClose(); } };
   return (
-    <Sheet open={open} onClose={onClose} title="Save session" primaryLabel="Save" onPrimary={() => { if (name.trim()) { onSave(name.trim()); onClose(); } }}>
-      <GroupHeader>Name</GroupHeader>
-      <Group>
-        <div className="px-4 py-3">
+    <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-[12vh]" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/70 fadeIn" />
+      <div
+        className="relative w-full max-w-[340px] bg-[var(--color-grouped-bg)] rounded-2xl slideIn overflow-hidden border border-white/10"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="p-5 text-center">
+          <div className="text-[17px] font-semibold">Save session</div>
+          <div className="text-[13px] text-[var(--color-secondary)] mt-1">Give it a name to find it in your library.</div>
           <input
             autoFocus
             type="text"
             value={name}
             onChange={e => setName(e.target.value)}
             onFocus={e => e.target.select()}
-            placeholder="e.g. Front squat + bench day"
-            className="w-full bg-transparent text-[17px] text-white placeholder:text-[var(--color-tertiary)] focus:outline-none"
+            onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+            placeholder="Front squat + bench"
+            className="mt-4 w-full bg-[var(--color-cell)] rounded-lg px-3 py-2.5 text-[15px] text-white text-center placeholder:text-[var(--color-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/50"
           />
         </div>
-      </Group>
-      <GroupFooter>Saved sessions stay on this device.</GroupFooter>
-    </Sheet>
+        <div className="flex border-t border-white/10">
+          <button type="button" onClick={onClose} className="press flex-1 h-11 text-[15px] text-[var(--color-accent)]">Cancel</button>
+          <div className="w-px bg-white/10" />
+          <button type="button" onClick={submit} disabled={!name.trim()} className="press flex-1 h-11 text-[15px] font-semibold text-[var(--color-accent)] disabled:opacity-30">Save</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
