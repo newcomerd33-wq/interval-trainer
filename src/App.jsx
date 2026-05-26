@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   ChevronRight, ChevronLeft, Check, Play, Pause, RotateCcw, SkipForward,
-  Volume2, VolumeX, Plus, Minus, X, Sliders, Bookmark, Trash2,
+  Volume2, VolumeX, Plus, Minus, X, Sliders, Bookmark, Trash2, Repeat,
 } from 'lucide-react';
 
 // Boxing bell samples (Vite resolves these to hashed URLs at build time)
@@ -179,6 +179,57 @@ function buildCustomSession(custom) {
     slots, totalSets, totalDurationSec,
     durationMin: totalMin,
     metaLine: `${totalMin} min · ${custom.circuits.length} circuit${custom.circuits.length > 1 ? 's' : ''}`,
+  };
+}
+
+// Primary + accessories rotation:
+// slot 0 (and every even slot) = primary; odd slots cycle through the accessories.
+// E.g., for 20 slots and 2 accessories: P A0 P A1 P A0 P A1 ... (primary = 10 sets, each accessory = 5)
+function emptyRotation() {
+  return {
+    duration: 20,
+    intervalSec: 60,
+    primary: { id: uid(), name: 'Primary exercise', mode: 'standard' },
+    accessories: [
+      { id: uid(), name: 'Accessory 1', mode: 'standard' },
+      { id: uid(), name: 'Accessory 2', mode: 'standard' },
+    ],
+  };
+}
+
+function buildRotationSession(rot) {
+  const totalSec = rot.duration * 60;
+  const totalSlots = Math.floor(totalSec / rot.intervalSec);
+  const accN = rot.accessories.length;
+  const slots = [];
+  for (let i = 0; i < totalSlots; i++) {
+    const round = Math.floor(i / 2) + 1;
+    const totalRounds = Math.ceil(totalSlots / 2);
+    if (i % 2 === 0) {
+      slots.push({
+        name: rot.primary.name,
+        duration: rot.intervalSec,
+        unilateral: rot.primary.mode === 'unilateral',
+        meta: { round, totalRounds, isPrimary: true },
+      });
+    } else {
+      const accIdx = Math.floor(i / 2) % accN;
+      const acc = rot.accessories[accIdx];
+      slots.push({
+        name: acc.name,
+        duration: rot.intervalSec,
+        unilateral: acc.mode === 'unilateral',
+        meta: { round, totalRounds, isAccessory: true, accessoryIdx: accIdx },
+      });
+    }
+  }
+  return {
+    type: 'rotation',
+    slots,
+    totalSets: totalSlots,
+    totalDurationSec: totalSlots * rot.intervalSec,
+    durationMin: Math.round((totalSlots * rot.intervalSec) / 60),
+    metaLine: `${rot.duration} min · ${rot.intervalSec}s · primary + ${accN} accessor${accN === 1 ? 'y' : 'ies'}`,
   };
 }
 
@@ -541,7 +592,7 @@ function Sheet({ open, onClose, title, children, primaryLabel = 'Done', onPrimar
 // =============================================================================
 const WIZARD_STEPS = ['duration', 'style', 'interval', 'composition', 'results'];
 
-function Wizard({ onPickConfig, onPickCustom, onOpenLibrary, libraryCount }) {
+function Wizard({ onPickConfig, onPickCustom, onPickRotation, onOpenLibrary, libraryCount }) {
   const [step, setStep] = useState(0);
   const [choices, setChoices] = useState({ duration: null, style: null, intervalSec: null, composition: null });
   const set = (key, value) => { setChoices(c => ({ ...c, [key]: value })); setStep(s => Math.min(s + 1, WIZARD_STEPS.length - 1)); };
@@ -610,6 +661,9 @@ function Wizard({ onPickConfig, onPickCustom, onOpenLibrary, libraryCount }) {
           <Group>
             <Row onClick={onPickCustom} subtitle="Set your own exercises, timers, circuits, and rest." leading={<Sliders size={20} strokeWidth={2.2} className="text-[var(--color-accent)]" />}>
               Custom timer
+            </Row>
+            <Row onClick={onPickRotation} subtitle="One primary exercise alternates with accessory rotation (A-B-A-C-A-B...)." leading={<Repeat size={20} strokeWidth={2.2} className="text-[var(--color-accent)]" />}>
+              Primary + accessories
             </Row>
           </Group>
         </>
@@ -1084,6 +1138,186 @@ function CustomBuilderView({ session, setSession, onBack, onStart, onSave }) {
 }
 
 // =============================================================================
+// ROTATION BUILDER (primary + accessories)
+// =============================================================================
+function isCleanRotation(durationMin, intervalSec) {
+  const total = (durationMin * 60) / intervalSec;
+  return Number.isInteger(total) && total % 2 === 0 && total >= 4;
+}
+
+function ChipPill({ active, onClick, disabled, children }) {
+  return (
+    <button
+      type="button"
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      className={`press inline-flex items-center rounded-full px-3.5 py-1.5 text-[14px] font-medium transition-colors ${
+        disabled
+          ? 'bg-[var(--color-cell)] text-[var(--color-tertiary)] cursor-not-allowed'
+          : active
+          ? 'bg-[var(--color-accent)] text-black'
+          : 'bg-[var(--color-cell-pressed)] text-white hover:bg-[var(--color-cell)]'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function RotationExerciseRow({ label, exercise, onChange }) {
+  return (
+    <div className="sep-row flex items-center min-h-[60px] px-4 py-2.5 gap-3">
+      <div className="text-[11px] uppercase tracking-wide text-[var(--color-secondary)] w-16 shrink-0">{label}</div>
+      <div className="flex-1 min-w-0">
+        <input
+          type="text"
+          value={exercise.name}
+          onChange={e => onChange({ ...exercise, name: e.target.value })}
+          onFocus={e => e.target.select()}
+          placeholder={label}
+          className="w-full bg-transparent text-[17px] text-white placeholder:text-[var(--color-tertiary)] focus:outline-none"
+        />
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange({ ...exercise, mode: exercise.mode === 'unilateral' ? 'standard' : 'unilateral' })}
+        className={`press shrink-0 rounded-md px-2 py-1.5 text-[12px] font-medium ${
+          exercise.mode === 'unilateral'
+            ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
+            : 'bg-[var(--color-cell-pressed)] text-[var(--color-secondary)]'
+        }`}
+      >
+        {exercise.mode === 'unilateral' ? 'Unilateral' : 'Standard'}
+      </button>
+    </div>
+  );
+}
+
+function RotationBuilderView({ rotation, setRotation, onBack, onStart, onSave }) {
+  const setField = (patch) => setRotation(r => ({ ...r, ...patch }));
+  const updatePrimary = (next) => setRotation(r => ({ ...r, primary: next }));
+  const updateAccessory = (idx, next) => setRotation(r => ({
+    ...r, accessories: r.accessories.map((a, i) => i === idx ? next : a),
+  }));
+  const setAccessoryCount = (n) => {
+    setRotation(r => {
+      const current = r.accessories.length;
+      if (n === current) return r;
+      if (n > current) {
+        const additions = [];
+        for (let i = current; i < n; i++) {
+          additions.push({ id: uid(), name: `Accessory ${i + 1}`, mode: 'standard' });
+        }
+        return { ...r, accessories: [...r.accessories, ...additions] };
+      }
+      return { ...r, accessories: r.accessories.slice(0, n) };
+    });
+  };
+
+  const valid = isCleanRotation(rotation.duration, rotation.intervalSec);
+  const totalSlots = valid ? (rotation.duration * 60) / rotation.intervalSec : 0;
+  const primarySets = totalSlots / 2;
+  const accN = rotation.accessories.length;
+  const baseAcc = Math.floor(primarySets / accN);
+  const accExtra = primarySets % accN;
+
+  return (
+    <div className="slideIn pb-8">
+      <NavBar
+        title="Rotation"
+        leftLabel="New"
+        onLeft={onBack}
+        rightLabel="Start"
+        onRight={valid ? onStart : undefined}
+        rightDisabled={!valid}
+      />
+
+      <GroupHeader>Duration</GroupHeader>
+      <Group>
+        <div className="px-4 py-3 flex flex-wrap gap-2">
+          {[15, 20, 30, 45, 60].map(d => (
+            <ChipPill key={d} active={rotation.duration === d} onClick={() => setField({ duration: d })}>
+              {d} min
+            </ChipPill>
+          ))}
+        </div>
+      </Group>
+
+      <GroupHeader>Interval</GroupHeader>
+      <Group>
+        <div className="px-4 py-3 flex flex-wrap gap-2">
+          {[45, 60, 75, 90, 120].map(s => {
+            const ok = isCleanRotation(rotation.duration, s);
+            return (
+              <ChipPill key={s} active={rotation.intervalSec === s} onClick={() => setField({ intervalSec: s })} disabled={!ok}>
+                {s}s
+              </ChipPill>
+            );
+          })}
+        </div>
+      </Group>
+      {!valid && <GroupFooter>This duration & interval combo doesn't split evenly. Pick a different interval.</GroupFooter>}
+
+      <GroupHeader>Accessories</GroupHeader>
+      <Group>
+        <div className="sep-row flex items-center justify-between px-4 py-2.5 min-h-[44px]">
+          <div className="text-[15px]">Number of accessories</div>
+          <div className="inline-flex items-center gap-1 bg-[var(--color-cell-pressed)] rounded-lg px-1 py-1">
+            <button
+              type="button"
+              onClick={() => setAccessoryCount(Math.max(1, accN - 1))}
+              disabled={accN <= 1}
+              className="press w-8 h-8 rounded-md text-white disabled:opacity-30 flex items-center justify-center"
+            >
+              <Minus size={15} strokeWidth={2.5} />
+            </button>
+            <div className="tabular text-[15px] font-semibold min-w-[28px] text-center">{accN}</div>
+            <button
+              type="button"
+              onClick={() => setAccessoryCount(Math.min(5, accN + 1))}
+              disabled={accN >= 5}
+              className="press w-8 h-8 rounded-md text-white disabled:opacity-30 flex items-center justify-center"
+            >
+              <Plus size={15} strokeWidth={2.5} />
+            </button>
+          </div>
+        </div>
+      </Group>
+      {valid && (
+        <GroupFooter>
+          Primary: <span className="text-white">{primarySets}</span> sets ·
+          {' '}Each accessory: <span className="text-white">{baseAcc}{accExtra > 0 ? `–${baseAcc + 1}` : ''}</span> set{baseAcc === 1 ? '' : 's'}
+          {accExtra > 0 ? ` (first ${accExtra} get one extra)` : ''}
+        </GroupFooter>
+      )}
+
+      <GroupHeader>Exercises</GroupHeader>
+      <Group>
+        <RotationExerciseRow label="Primary" exercise={rotation.primary} onChange={updatePrimary} />
+        {rotation.accessories.map((acc, i) => (
+          <RotationExerciseRow
+            key={acc.id}
+            label={`Acc ${i + 1}`}
+            exercise={acc}
+            onChange={(next) => updateAccessory(i, next)}
+          />
+        ))}
+      </Group>
+      <GroupFooter>
+        Pattern: primary alternates with accessories. {accN > 1 ? `Each accessory takes its turn between primary sets.` : `With one accessory, it's a simple A/B alternation.`}
+      </GroupFooter>
+
+      <GroupHeader>Library</GroupHeader>
+      <Group>
+        <Row onClick={onSave} leading={<Bookmark size={18} strokeWidth={2.2} className="text-[var(--color-accent)]" />}>
+          Save to library
+        </Row>
+      </Group>
+    </div>
+  );
+}
+
+// =============================================================================
 // LIBRARY VIEW
 // =============================================================================
 function LibraryView({ items, onClose, onLoad, onRequestDelete }) {
@@ -1111,6 +1345,9 @@ function LibraryView({ items, onClose, onLoad, onRequestDelete }) {
                 } else {
                   sub = 'Preset config (unavailable)';
                 }
+              } else if (item.sourceType === 'rotation') {
+                const r = item.rotation;
+                sub = `Rotation · ${r.duration} min · ${r.intervalSec}s · primary + ${r.accessories.length} accessor${r.accessories.length === 1 ? 'y' : 'ies'}`;
               } else {
                 const built = buildCustomSession(item.custom);
                 sub = `Custom · ${built.durationMin} min · ${built.totalSets} sets · ${item.custom.circuits.length} circuit${item.custom.circuits.length > 1 ? 's' : ''}`;
@@ -1434,12 +1671,14 @@ export default function App() {
   const [loadedFromId, setLoadedFromId] = useState(null);
   const [savePromptOpen, setSavePromptOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [rotation, setRotation] = useState(null);
 
   const persist = (next) => { setLibrary(next); persistLibrary(next); };
 
   const pickPreset = (config) => {
     setMode('preset');
     setCustomSession(null);
+    setRotation(null);
     setPresetConfig(config);
     setPresetBlocks(makeBlocks(config.bilateral, config.unilateral));
     setLoadedFromId(null);
@@ -1449,9 +1688,19 @@ export default function App() {
     setMode('custom');
     setPresetConfig(null);
     setPresetBlocks([]);
+    setRotation(null);
     setCustomSession(emptyCustom());
     setLoadedFromId(null);
     setView('customBuilder');
+  };
+  const pickRotation = () => {
+    setMode('rotation');
+    setPresetConfig(null);
+    setPresetBlocks([]);
+    setCustomSession(null);
+    setRotation(emptyRotation());
+    setLoadedFromId(null);
+    setView('rotationBuilder');
   };
   const openLibrary = () => setView('library');
   const closeLibrary = () => setView('wizard');
@@ -1463,14 +1712,28 @@ export default function App() {
       if (!cfg) return;
       setMode('preset');
       setCustomSession(null);
+      setRotation(null);
       setPresetConfig(cfg);
       setPresetBlocks(item.blocks.map(b => ({ ...b, id: uid() })));
       setLoadedFromId(item.id);
       setView('configure');
+    } else if (item.sourceType === 'rotation') {
+      setMode('rotation');
+      setPresetConfig(null);
+      setPresetBlocks([]);
+      setCustomSession(null);
+      // re-seed ids on exercises so React keys stay stable
+      const rot = JSON.parse(JSON.stringify(item.rotation));
+      rot.primary.id = uid();
+      rot.accessories = rot.accessories.map(a => ({ ...a, id: uid() }));
+      setRotation(rot);
+      setLoadedFromId(item.id);
+      setView('rotationBuilder');
     } else {
       setMode('custom');
       setPresetConfig(null);
       setPresetBlocks([]);
+      setRotation(null);
       setCustomSession(JSON.parse(JSON.stringify(item.custom)));
       setLoadedFromId(item.id);
       setView('customBuilder');
@@ -1505,6 +1768,9 @@ export default function App() {
       } else if (mode === 'custom' && customSession) {
         patch.sourceType = 'custom';
         patch.custom = JSON.parse(JSON.stringify(customSession));
+      } else if (mode === 'rotation' && rotation) {
+        patch.sourceType = 'rotation';
+        patch.rotation = JSON.parse(JSON.stringify(rotation));
       }
       return { ...i, ...patch };
     });
@@ -1527,6 +1793,12 @@ export default function App() {
         sourceType: 'custom',
         custom: JSON.parse(JSON.stringify(customSession)),
       };
+    } else if (mode === 'rotation' && rotation) {
+      item = {
+        id: uid(), savedAt: Date.now(), name,
+        sourceType: 'rotation',
+        rotation: JSON.parse(JSON.stringify(rotation)),
+      };
     }
     if (item) {
       persist([item, ...library]);
@@ -1540,21 +1812,24 @@ export default function App() {
     ? `${presetConfig.duration}m · ${presetConfig.totalEx} ex × ${presetConfig.sets}`
     : mode === 'custom' && customSession
     ? customSession.circuits[0]?.exercises?.[0]?.name || 'Custom session'
+    : mode === 'rotation' && rotation
+    ? `${rotation.primary.name} + ${rotation.accessories.length} accessories`
     : '';
 
   const session = useMemo(() => {
     if (view === 'timer') {
       if (mode === 'preset' && presetConfig && presetBlocks?.length) return buildPresetSession(presetConfig, presetBlocks);
       if (mode === 'custom' && customSession) return buildCustomSession(customSession);
+      if (mode === 'rotation' && rotation) return buildRotationSession(rotation);
     }
     return null;
-  }, [view, mode, presetConfig, presetBlocks, customSession]);
+  }, [view, mode, presetConfig, presetBlocks, customSession, rotation]);
 
   return (
     <div style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
       <div className="max-w-[440px] mx-auto">
         {view === 'wizard' && (
-          <Wizard onPickConfig={pickPreset} onPickCustom={pickCustom} onOpenLibrary={openLibrary} libraryCount={library.length} />
+          <Wizard onPickConfig={pickPreset} onPickCustom={pickCustom} onPickRotation={pickRotation} onOpenLibrary={openLibrary} libraryCount={library.length} />
         )}
         {view === 'library' && (
           <LibraryView items={library} onClose={closeLibrary} onLoad={loadFromLibrary} onRequestDelete={requestDelete} />
@@ -1578,10 +1853,19 @@ export default function App() {
             onSave={triggerSave}
           />
         )}
+        {view === 'rotationBuilder' && rotation && (
+          <RotationBuilderView
+            rotation={rotation}
+            setRotation={setRotation}
+            onBack={goBackToWizard}
+            onStart={() => setView('timer')}
+            onSave={triggerSave}
+          />
+        )}
         {view === 'timer' && session && (
           <TimerView
             session={session}
-            onBack={() => setView(mode === 'custom' ? 'customBuilder' : 'configure')}
+            onBack={() => setView(mode === 'custom' ? 'customBuilder' : mode === 'rotation' ? 'rotationBuilder' : 'configure')}
           />
         )}
         <SaveDialog open={saveOpen} defaultName={defaultName} onClose={() => setSaveOpen(false)} onSave={saveCurrent} />
