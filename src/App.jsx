@@ -182,12 +182,13 @@ function buildCustomSession(custom) {
   };
 }
 
-// Primary + accessories rotation:
-// slot 0 (and every even slot) = primary; odd slots cycle through the accessories.
-// E.g., for 20 slots and 2 accessories: P A0 P A1 P A0 P A1 ... (primary = 10 sets, each accessory = 5)
+// Primary + accessories rotation.
+// A "sequence" pairs the primary with each accessory once: P-A1-P-A2-...-P-AN
+// (2 × accessoryCount slots). The user picks how many sequence rounds to do.
+// Example: 3 accessories, 5 rounds = 30 slots; primary gets 15 sets, each accessory gets 5.
 function emptyRotation() {
   return {
-    duration: 20,
+    rounds: 5,
     intervalSec: 60,
     primary: { id: uid(), name: 'Primary exercise', mode: 'standard' },
     accessories: [
@@ -198,19 +199,18 @@ function emptyRotation() {
 }
 
 function buildRotationSession(rot) {
-  const totalSec = rot.duration * 60;
-  const totalSlots = Math.floor(totalSec / rot.intervalSec);
   const accN = rot.accessories.length;
+  const slotsPerSequence = 2 * accN;
+  const totalSlots = rot.rounds * slotsPerSequence;
   const slots = [];
   for (let i = 0; i < totalSlots; i++) {
-    const round = Math.floor(i / 2) + 1;
-    const totalRounds = Math.ceil(totalSlots / 2);
+    const seqIdx = Math.floor(i / slotsPerSequence) + 1;
     if (i % 2 === 0) {
       slots.push({
         name: rot.primary.name,
         duration: rot.intervalSec,
         unilateral: rot.primary.mode === 'unilateral',
-        meta: { round, totalRounds, isPrimary: true },
+        meta: { round: seqIdx, totalRounds: rot.rounds, isPrimary: true },
       });
     } else {
       const accIdx = Math.floor(i / 2) % accN;
@@ -219,17 +219,18 @@ function buildRotationSession(rot) {
         name: acc.name,
         duration: rot.intervalSec,
         unilateral: acc.mode === 'unilateral',
-        meta: { round, totalRounds, isAccessory: true, accessoryIdx: accIdx },
+        meta: { round: seqIdx, totalRounds: rot.rounds, isAccessory: true, accessoryIdx: accIdx },
       });
     }
   }
+  const totalDurationSec = totalSlots * rot.intervalSec;
   return {
     type: 'rotation',
     slots,
     totalSets: totalSlots,
-    totalDurationSec: totalSlots * rot.intervalSec,
-    durationMin: Math.round((totalSlots * rot.intervalSec) / 60),
-    metaLine: `${rot.duration} min · ${rot.intervalSec}s · primary + ${accN} accessor${accN === 1 ? 'y' : 'ies'}`,
+    totalDurationSec,
+    durationMin: Math.round(totalDurationSec / 60),
+    metaLine: `${Math.round(totalDurationSec / 60)} min · ${rot.intervalSec}s · primary + ${accN} accessor${accN === 1 ? 'y' : 'ies'}`,
   };
 }
 
@@ -1214,12 +1215,14 @@ function RotationBuilderView({ rotation, setRotation, onBack, onStart, onSave })
     });
   };
 
-  const valid = isCleanRotation(rotation.duration, rotation.intervalSec);
-  const totalSlots = valid ? (rotation.duration * 60) / rotation.intervalSec : 0;
-  const primarySets = totalSlots / 2;
   const accN = rotation.accessories.length;
-  const baseAcc = Math.floor(primarySets / accN);
-  const accExtra = primarySets % accN;
+  const slotsPerSequence = 2 * accN;
+  const totalSlots = rotation.rounds * slotsPerSequence;
+  const totalDurationSec = totalSlots * rotation.intervalSec;
+  const totalMin = Math.floor(totalDurationSec / 60);
+  const totalRemSec = totalDurationSec % 60;
+  const primarySets = rotation.rounds * accN;
+  const accessorySets = rotation.rounds;
 
   return (
     <div className="slideIn pb-8">
@@ -1228,40 +1231,50 @@ function RotationBuilderView({ rotation, setRotation, onBack, onStart, onSave })
         leftLabel="New"
         onLeft={onBack}
         rightLabel="Start"
-        onRight={valid ? onStart : undefined}
-        rightDisabled={!valid}
+        onRight={onStart}
       />
 
-      <GroupHeader>Duration</GroupHeader>
+      <GroupHeader>Summary</GroupHeader>
+      <Group>
+        <div className="px-4 py-3 flex items-stretch divide-x divide-[var(--color-sep)]">
+          <div className="flex-1 pr-3">
+            <div className="text-[11px] uppercase tracking-wide text-[var(--color-secondary)]">Total time</div>
+            <div className="tabular text-[20px] font-semibold mt-0.5">
+              {totalMin}{totalRemSec > 0 ? `:${String(totalRemSec).padStart(2, '0')}` : ''}<span className="text-[13px] text-[var(--color-secondary)] font-normal ml-0.5">{totalRemSec > 0 ? '' : ' min'}</span>
+            </div>
+          </div>
+          <div className="flex-1 px-3">
+            <div className="text-[11px] uppercase tracking-wide text-[var(--color-secondary)]">Total sets</div>
+            <div className="tabular text-[20px] font-semibold mt-0.5">{totalSlots}</div>
+          </div>
+          <div className="flex-1 pl-3">
+            <div className="text-[11px] uppercase tracking-wide text-[var(--color-secondary)]">Per seq.</div>
+            <div className="tabular text-[20px] font-semibold mt-0.5">{slotsPerSequence}</div>
+          </div>
+        </div>
+      </Group>
+      <GroupFooter>
+        Primary: <span className="text-white">{primarySets}</span> sets · Each accessory: <span className="text-white">{accessorySets}</span> sets
+      </GroupFooter>
+
+      <GroupHeader>Interval</GroupHeader>
       <Group>
         <div className="px-4 py-3 flex flex-wrap gap-2">
-          {[15, 20, 30, 45, 60].map(d => (
-            <ChipPill key={d} active={rotation.duration === d} onClick={() => setField({ duration: d })}>
-              {d} min
+          {[30, 45, 60, 75, 90, 120].map(s => (
+            <ChipPill key={s} active={rotation.intervalSec === s} onClick={() => setField({ intervalSec: s })}>
+              {s}s
             </ChipPill>
           ))}
         </div>
       </Group>
 
-      <GroupHeader>Interval</GroupHeader>
-      <Group>
-        <div className="px-4 py-3 flex flex-wrap gap-2">
-          {[45, 60, 75, 90, 120].map(s => {
-            const ok = isCleanRotation(rotation.duration, s);
-            return (
-              <ChipPill key={s} active={rotation.intervalSec === s} onClick={() => setField({ intervalSec: s })} disabled={!ok}>
-                {s}s
-              </ChipPill>
-            );
-          })}
-        </div>
-      </Group>
-      {!valid && <GroupFooter>This duration & interval combo doesn't split evenly. Pick a different interval.</GroupFooter>}
-
       <GroupHeader>Accessories</GroupHeader>
       <Group>
         <div className="sep-row flex items-center justify-between px-4 py-2.5 min-h-[44px]">
-          <div className="text-[15px]">Number of accessories</div>
+          <div>
+            <div className="text-[15px]">Number of accessories</div>
+            <div className="text-[12px] text-[var(--color-secondary)] mt-0.5">One sequence = {slotsPerSequence} sets</div>
+          </div>
           <div className="inline-flex items-center gap-1 bg-[var(--color-cell-pressed)] rounded-lg px-1 py-1">
             <button
               type="button"
@@ -1283,13 +1296,35 @@ function RotationBuilderView({ rotation, setRotation, onBack, onStart, onSave })
           </div>
         </div>
       </Group>
-      {valid && (
-        <GroupFooter>
-          Primary: <span className="text-white">{primarySets}</span> sets ·
-          {' '}Each accessory: <span className="text-white">{baseAcc}{accExtra > 0 ? `–${baseAcc + 1}` : ''}</span> set{baseAcc === 1 ? '' : 's'}
-          {accExtra > 0 ? ` (first ${accExtra} get one extra)` : ''}
-        </GroupFooter>
-      )}
+
+      <GroupHeader>Sequence rounds</GroupHeader>
+      <Group>
+        <div className="sep-row flex items-center justify-between px-4 py-2.5 min-h-[44px]">
+          <div>
+            <div className="text-[15px]">How many times to repeat</div>
+            <div className="text-[12px] text-[var(--color-secondary)] mt-0.5">{rotation.rounds} × {slotsPerSequence} = {totalSlots} sets total</div>
+          </div>
+          <div className="inline-flex items-center gap-1 bg-[var(--color-cell-pressed)] rounded-lg px-1 py-1">
+            <button
+              type="button"
+              onClick={() => setField({ rounds: Math.max(1, rotation.rounds - 1) })}
+              disabled={rotation.rounds <= 1}
+              className="press w-8 h-8 rounded-md text-white disabled:opacity-30 flex items-center justify-center"
+            >
+              <Minus size={15} strokeWidth={2.5} />
+            </button>
+            <div className="tabular text-[15px] font-semibold min-w-[28px] text-center">{rotation.rounds}</div>
+            <button
+              type="button"
+              onClick={() => setField({ rounds: Math.min(30, rotation.rounds + 1) })}
+              disabled={rotation.rounds >= 30}
+              className="press w-8 h-8 rounded-md text-white disabled:opacity-30 flex items-center justify-center"
+            >
+              <Plus size={15} strokeWidth={2.5} />
+            </button>
+          </div>
+        </div>
+      </Group>
 
       <GroupHeader>Exercises</GroupHeader>
       <Group>
@@ -1304,7 +1339,7 @@ function RotationBuilderView({ rotation, setRotation, onBack, onStart, onSave })
         ))}
       </Group>
       <GroupFooter>
-        Pattern: primary alternates with accessories. {accN > 1 ? `Each accessory takes its turn between primary sets.` : `With one accessory, it's a simple A/B alternation.`}
+        Each sequence: primary → acc 1 → primary → acc 2{accN > 2 ? ` → primary → acc 3${accN > 3 ? '…' : ''}` : ''}.
       </GroupFooter>
 
       <GroupHeader>Library</GroupHeader>
@@ -1347,7 +1382,11 @@ function LibraryView({ items, onClose, onLoad, onRequestDelete }) {
                 }
               } else if (item.sourceType === 'rotation') {
                 const r = item.rotation;
-                sub = `Rotation · ${r.duration} min · ${r.intervalSec}s · primary + ${r.accessories.length} accessor${r.accessories.length === 1 ? 'y' : 'ies'}`;
+                const accN = r.accessories.length;
+                const slotsPerSeq = 2 * accN;
+                const totalSlots = r.rounds * slotsPerSeq;
+                const totalMin = Math.round((totalSlots * r.intervalSec) / 60);
+                sub = `Rotation · ${totalMin} min · ${r.intervalSec}s · primary + ${accN} accessor${accN === 1 ? 'y' : 'ies'} × ${r.rounds} rounds`;
               } else {
                 const built = buildCustomSession(item.custom);
                 sub = `Custom · ${built.durationMin} min · ${built.totalSets} sets · ${item.custom.circuits.length} circuit${item.custom.circuits.length > 1 ? 's' : ''}`;
