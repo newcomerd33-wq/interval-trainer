@@ -10,7 +10,8 @@ import { LogEditorView } from './views/LogEditorView.jsx';
 import { DataBackup } from './views/DataBackup.jsx';
 import { ReviewLog } from './views/ReviewLog.jsx';
 import { CalendarView } from './views/CalendarView.jsx';
-import { addRule, removeRule, addOneOff, removeOneOff, setOneOffStatus, addException } from './schedule.js';
+import { TodayStrip } from './views/TodayStrip.jsx';
+import { addRule, removeRule, addOneOff, removeOneOff, setOneOffStatus, addException, occurrencesInRange, scheduledDoneKeys } from './schedule.js';
 import { loadLibrary, saveLibrary, loadJournal, saveJournal, loadExercises, saveExercises, loadSchedule, saveSchedule, buildBackup, loadActiveLog, saveActiveLog, clearActiveLog } from './storage.js';
 import { exercisesForItem, expandSetsFromSlots } from './exercises.js';
 import { ensureExercise, findExercise, normalizeExerciseName } from './catalog.js';
@@ -2173,6 +2174,13 @@ export default function App() {
     else setView('library');
   };
 
+  // Today's planned (not done, not skipped) occurrences for the Train-home strip.
+  const todaysOccurrences = useMemo(() => {
+    const tk = todayKey();
+    const done = scheduledDoneKeys(journal);
+    return occurrencesInRange(schedule, tk, tk).filter((o) => !done.has(o.id) && o.status !== 'skipped');
+  }, [schedule, journal]);
+
   const session = useMemo(() => (view === 'timer' ? buildCurrentSession() : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [view, mode, presetConfig, presetBlocks, customSession, rotation]);
@@ -2215,7 +2223,10 @@ export default function App() {
           </div>
         )}
         {view === 'wizard' && (
-          <Wizard onPickConfig={pickPreset} onPickCustom={pickCustom} onPickRotation={pickRotation} />
+          <>
+            <TodayStrip occurrences={todaysOccurrences} library={library} onStart={calendarHandlers.onStart} onLog={calendarHandlers.onLog} />
+            <Wizard onPickConfig={pickPreset} onPickCustom={pickCustom} onPickRotation={pickRotation} />
+          </>
         )}
         {view === 'library' && (
           <LibraryView
