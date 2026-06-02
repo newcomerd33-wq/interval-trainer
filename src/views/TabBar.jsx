@@ -5,10 +5,11 @@
 // Saved). Rendered by App; visibility + active state are decided there.
 // =============================================================================
 
-import { Timer, ClipboardList, Bookmark } from 'lucide-react';
+import { Timer, CalendarDays, ClipboardList, Bookmark } from 'lucide-react';
 
 const TABS = [
   { id: 'train', label: 'Train', Icon: Timer },
+  { id: 'calendar', label: 'Calendar', Icon: CalendarDays },
   { id: 'history', label: 'History', Icon: ClipboardList },
   { id: 'library', label: 'Saved', Icon: Bookmark },
 ];

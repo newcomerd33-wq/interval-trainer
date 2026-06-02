@@ -9,6 +9,8 @@ import { HistoryView } from './views/HistoryView.jsx';
 import { LogEditorView } from './views/LogEditorView.jsx';
 import { DataBackup } from './views/DataBackup.jsx';
 import { ReviewLog } from './views/ReviewLog.jsx';
+import { CalendarView } from './views/CalendarView.jsx';
+import { addRule, removeRule, addOneOff, removeOneOff, setOneOffStatus, addException } from './schedule.js';
 import { loadLibrary, saveLibrary, loadJournal, saveJournal, loadExercises, saveExercises, loadSchedule, saveSchedule, buildBackup, loadActiveLog, saveActiveLog, clearActiveLog } from './storage.js';
 import { exercisesForItem, expandSetsFromSlots } from './exercises.js';
 import { ensureExercise, findExercise, normalizeExerciseName } from './catalog.js';
@@ -1747,6 +1749,7 @@ export default function App() {
   const [pendingJournalDelete, setPendingJournalDelete] = useState(null);
   const [activeLog, setActiveLog] = useState(() => loadActiveLog()); // in-progress workout draft
   const [schedule, setSchedule] = useState(() => loadSchedule());
+  const [scheduledLaunch, setScheduledLaunch] = useState(null); // schedule context carried builder->timer
   const [reviewOpen, setReviewOpen] = useState(false); // in-timer review sheet
   const [pendingTimerBack, setPendingTimerBack] = useState(false); // leave-timer prompt
   const [pendingDiscardDraft, setPendingDiscardDraft] = useState(false);
@@ -1766,6 +1769,7 @@ export default function App() {
     setPresetConfig(config);
     setPresetBlocks(makeBlocks(config.bilateral, config.unilateral));
     setLoadedFromId(null);
+    setScheduledLaunch(null);
     setView('configure');
   };
   const pickCustom = () => {
@@ -1775,6 +1779,7 @@ export default function App() {
     setRotation(null);
     setCustomSession(emptyCustom());
     setLoadedFromId(null);
+    setScheduledLaunch(null);
     setView('customBuilder');
   };
   const pickRotation = () => {
@@ -1784,11 +1789,12 @@ export default function App() {
     setCustomSession(null);
     setRotation(emptyRotation());
     setLoadedFromId(null);
+    setScheduledLaunch(null);
     setView('rotationBuilder');
   };
   const openLibrary = () => setView('library');
   const closeLibrary = () => setView('wizard');
-  const goBackToWizard = () => { setLoadedFromId(null); setPendingOrigin(null); setView('wizard'); };
+  const goBackToWizard = () => { setLoadedFromId(null); setPendingOrigin(null); setScheduledLaunch(null); setView('wizard'); };
 
   const loadFromLibrary = (item) => {
     if (item.sourceType === 'preset') {
@@ -1913,12 +1919,20 @@ export default function App() {
   const doStartTimer = () => {
     const s = buildCurrentSession();
     const name = (loadedFromId ? originalName : defaultName) || 'Workout';
+    const sl = scheduledLaunch || {};
     setPendingOrigin({
-      origin: { libraryId: loadedFromId ?? null, scheduleRuleId: null, scheduleOneOffId: null, occurrenceDate: null, viaTimer: false },
+      origin: {
+        libraryId: loadedFromId ?? null,
+        scheduleRuleId: sl.scheduleRuleId ?? null,
+        scheduleOneOffId: sl.scheduleOneOffId ?? null,
+        occurrenceDate: sl.occurrenceDate ?? null,
+        viaTimer: false,
+      },
       sessionName: name,
       sourceType: mode,
       durationMin: s?.durationMin ?? null,
     });
+    setScheduledLaunch(null); // captured into pendingOrigin
     setView('timer');
   };
 
@@ -2076,6 +2090,47 @@ export default function App() {
 
   const cancelLog = () => { setLogDraft(null); setView(logReturnTo); };
 
+  // --- calendar / scheduling ------------------------------------------------
+  const calendarHandlers = {
+    onStart: (occ) => {
+      const item = library.find((i) => i.id === occ.libraryId);
+      if (!item) return;
+      setScheduledLaunch({ scheduleRuleId: occ.ruleId, scheduleOneOffId: occ.oneOffId, occurrenceDate: occ.date });
+      loadFromLibrary(item); // -> builder; Start there carries scheduledLaunch into pendingOrigin
+    },
+    onLog: (occ) => {
+      const item = library.find((i) => i.id === occ.libraryId);
+      if (!item) return;
+      const derived = exercisesForItem(item);
+      const seed = seedExercisesForLog({ derived, catalog, journal, beforeDate: occ.date });
+      setLogDraft(createEntry({
+        date: occ.date,
+        sessionName: item.name,
+        sourceType: item.sourceType,
+        origin: { libraryId: item.id, scheduleRuleId: occ.ruleId, scheduleOneOffId: occ.oneOffId, occurrenceDate: occ.date },
+        exercises: seed.exercises,
+      }));
+      setLogSuggestions(buildSuggestions(seed.exercises, { beforeDate: occ.date }));
+      setLogMode('create');
+      setLogReturnTo('calendar');
+      setView('logEditor');
+    },
+    onSkip: (occ) => {
+      if (occ.source === 'rule') persistSchedule(addException(schedule, occ.ruleId, occ.date));
+      else persistSchedule(setOneOffStatus(schedule, occ.oneOffId, 'skipped'));
+    },
+    onRemove: (occ) => {
+      if (occ.source === 'rule') persistSchedule(removeRule(schedule, occ.ruleId));
+      else persistSchedule(removeOneOff(schedule, occ.oneOffId));
+    },
+    onAddOneOff: (date, item) => {
+      persistSchedule(addOneOff(schedule, { id: uid(), date, libraryId: item.id, name: item.name, status: 'planned', createdAt: Date.now() }));
+    },
+    onAddWeekly: (item, daysOfWeek) => {
+      persistSchedule(addRule(schedule, { id: uid(), libraryId: item.id, name: item.name, kind: 'weekly', daysOfWeek, createdAt: Date.now() }));
+    },
+  };
+
   const requestJournalDelete = (entry) => setPendingJournalDelete(entry);
   const confirmJournalDelete = () => {
     if (!pendingJournalDelete) return;
@@ -2106,10 +2161,11 @@ export default function App() {
   };
 
   // --- tab bar --------------------------------------------------------------
-  const showTabBar = view === 'wizard' || view === 'history' || view === 'library';
-  const activeTab = view === 'history' ? 'history' : view === 'library' ? 'library' : 'train';
+  const showTabBar = view === 'wizard' || view === 'calendar' || view === 'history' || view === 'library';
+  const activeTab = view === 'calendar' ? 'calendar' : view === 'history' ? 'history' : view === 'library' ? 'library' : 'train';
   const selectTab = (id) => {
     if (id === 'train') goBackToWizard();
+    else if (id === 'calendar') setView('calendar');
     else if (id === 'history') setView('history');
     else setView('library');
   };
@@ -2162,11 +2218,14 @@ export default function App() {
           <LibraryView
             items={library}
             onClose={closeLibrary}
-            onLoad={loadFromLibrary}
+            onLoad={(item) => { setScheduledLaunch(null); loadFromLibrary(item); }}
             onLog={openLogForItem}
             onRequestDelete={requestDelete}
             footer={<DataBackup getBackup={getBackup} onImported={onImported} />}
           />
+        )}
+        {view === 'calendar' && (
+          <CalendarView schedule={schedule} journal={journal} library={library} handlers={calendarHandlers} />
         )}
         {view === 'history' && (
           <HistoryView journal={journal} onNew={openAdhocLog} onOpen={openEditLog} onRequestDelete={requestJournalDelete} />
