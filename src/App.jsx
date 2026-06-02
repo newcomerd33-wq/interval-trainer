@@ -1767,8 +1767,11 @@ export default function App() {
   // --- journal entry points -------------------------------------------------
   const openLogForItem = (item) => {
     const derived = exercisesForItem(item);
+    // Don't persist the catalog at open time — saveLog resolves + persists names
+    // on save, so cancelling never leaves orphan entries. Carry-forward is
+    // unaffected: existing exercises resolve to their persisted ids; brand-new
+    // names have no history to carry regardless.
     const seed = seedExercisesForLog({ derived, catalog, journal, beforeDate: todayKey() });
-    persistCatalog(seed.catalog);
     setLogDraft(createEntry({
       sessionName: item.name,
       sourceType: item.sourceType,
@@ -1783,8 +1786,11 @@ export default function App() {
   const openLogFromTimer = () => {
     const s = buildCurrentSession();
     const derived = s ? expandSetsFromSlots(s.slots) : [];
+    // Don't persist the catalog at open time — saveLog resolves + persists names
+    // on save, so cancelling never leaves orphan entries. Carry-forward is
+    // unaffected: existing exercises resolve to their persisted ids; brand-new
+    // names have no history to carry regardless.
     const seed = seedExercisesForLog({ derived, catalog, journal, beforeDate: todayKey() });
-    persistCatalog(seed.catalog);
     const po = pendingOrigin || {};
     setLogDraft(createEntry({
       sessionName: po.sessionName || 'Workout',
