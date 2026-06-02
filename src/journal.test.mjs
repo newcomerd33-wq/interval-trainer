@@ -145,7 +145,7 @@ test('entriesForExercise returns oldest-first history', () => {
 
 // --- seedExercisesForLog -----------------------------------------------------
 
-test('seedExercisesForLog ensures catalog + carries forward by exerciseId', () => {
+test('seedExercisesForLog ensures catalog + resolves id/unit, blank sets (placeholders)', () => {
   const idFn = seqIds();
   const catalog = [{ id: 'sq', name: 'Squat', aliases: [], defaultMetricKind: 'weight_reps', defaultUnit: 'lb' }];
   const journal = [{ id: 'p', date: '2026-06-01', loggedAt: 5, exercises: [{ exerciseId: 'sq', metricKind: 'weight_reps', unit: 'kg', sets: [{ weight: 140, reps: 3 }] }] }];
@@ -153,12 +153,12 @@ test('seedExercisesForLog ensures catalog + carries forward by exerciseId', () =
 
   const { catalog: cat, exercises } = seedExercisesForLog({ derived, catalog, journal, beforeDate: '2026-06-02' }, { idFn });
 
-  // 'squat' matched existing 'Squat' (case-insensitive) -> reused id, carried unit + weight
+  // 'squat' matched existing 'Squat' (case-insensitive) -> reused id; unit carried
   assert.equal(exercises[0].exerciseId, 'sq');
-  assert.equal(exercises[0].unit, 'kg'); // carried from prior log, not catalog default
-  assert.equal(exercises[0].sets.length, 2);
-  assert.equal(exercises[0].sets[0].weight, 140);
-  assert.equal(exercises[0].sets[1].weight, 140); // padded
+  assert.equal(exercises[0].unit, 'kg'); // unit still carried from prior log
+  assert.equal(exercises[0].sets.length, 2); // count from derived
+  assert.equal(exercises[0].sets[0].weight, null); // blank — last time shows as placeholder, not value
+  assert.equal(exercises[0].sets[1].weight, null);
   assert.equal(exercises[0].nameSnapshot, 'squat'); // exact name used today
 
   // 'Lunge' is new -> catalog grew, blank sets

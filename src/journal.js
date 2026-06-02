@@ -179,7 +179,11 @@ export function seedExercisesForLog({ derived, catalog, journal, beforeDate, exc
     const prevEx = lastExerciseLogged(journal, cx.id, { beforeDate, excludeId });
     const metricKind = prevEx?.metricKind || cx.defaultMetricKind || DEFAULT_METRIC_KIND;
     const unit = prevEx?.unit || cx.defaultUnit || DEFAULT_UNIT;
-    const sets = carryForwardSets(prevEx, metricKind, d.setCount, { idFn });
+    // Blank sets. Last-time values surface as editor placeholders (via
+    // suggestionsForExercise), NOT pre-filled values, so an untouched set is
+    // never saved as if it were performed.
+    const count = Math.max(0, d.setCount == null ? 1 : d.setCount);
+    const sets = Array.from({ length: count }, () => emptySet(metricKind, { idFn }));
 
     exercises.push({
       id: idFn(),

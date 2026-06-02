@@ -11,7 +11,7 @@ import { DataBackup } from './views/DataBackup.jsx';
 import { loadLibrary, saveLibrary, loadJournal, saveJournal, loadExercises, saveExercises, loadSchedule, buildBackup } from './storage.js';
 import { exercisesForItem, expandSetsFromSlots } from './exercises.js';
 import { ensureExercise } from './catalog.js';
-import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt } from './journal.js';
+import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt, suggestionsForExercise, pruneEntry } from './journal.js';
 import { todayKey } from './date.js';
 
 // Boxing bell samples (Vite resolves these to hashed URLs at build time)
@@ -1595,6 +1595,7 @@ export default function App() {
   const [catalog, setCatalog] = useState(() => loadExercises());
   const [pendingOrigin, setPendingOrigin] = useState(null); // timer launch context
   const [logDraft, setLogDraft] = useState(null);
+  const [logSuggestions, setLogSuggestions] = useState({}); // exerciseId -> prior session's sets
   const [logMode, setLogMode] = useState('create');
   const [logReturnTo, setLogReturnTo] = useState('history');
   const [pendingJournalDelete, setPendingJournalDelete] = useState(null);
@@ -1767,6 +1768,17 @@ export default function App() {
   };
 
   // --- journal entry points -------------------------------------------------
+  // Positional last-time sets per exercise, rendered as editor placeholders.
+  const buildSuggestions = (exercises, opts) => {
+    const m = {};
+    for (const ex of exercises || []) {
+      if (!ex.exerciseId) continue;
+      const s = suggestionsForExercise(journal, ex.exerciseId, opts);
+      if (s.length) m[ex.exerciseId] = s;
+    }
+    return m;
+  };
+
   const openLogForItem = (item) => {
     const derived = exercisesForItem(item);
     // Don't persist the catalog at open time — saveLog resolves + persists names
@@ -1780,6 +1792,7 @@ export default function App() {
       origin: { libraryId: item.id },
       exercises: seed.exercises,
     }));
+    setLogSuggestions(buildSuggestions(seed.exercises, { beforeDate: todayKey() }));
     setLogMode('create');
     setLogReturnTo('library');
     setView('logEditor');
@@ -1801,6 +1814,7 @@ export default function App() {
       origin: { ...(po.origin || {}), viaTimer: true },
       exercises: seed.exercises,
     }));
+    setLogSuggestions(buildSuggestions(seed.exercises, { beforeDate: todayKey() }));
     setLogMode('create');
     setLogReturnTo('timer');
     setView('logEditor');
@@ -1808,6 +1822,7 @@ export default function App() {
 
   const openAdhocLog = () => {
     setLogDraft(createEntry({ sourceType: 'adhoc', origin: {}, exercises: [] }));
+    setLogSuggestions({});
     setLogMode('create');
     setLogReturnTo('history');
     setView('logEditor');
@@ -1815,24 +1830,29 @@ export default function App() {
 
   const openEditLog = (entry) => {
     setLogDraft(entry);
+    // Don't read the entry being edited, or anything newer than its date.
+    setLogSuggestions(buildSuggestions(entry.exercises, { beforeDate: entry.date, excludeId: entry.id }));
     setLogMode('edit');
     setLogReturnTo('history');
     setView('logEditor');
   };
 
   const saveLog = (entry) => {
-    // Resolve catalog ids for all nonblank exercise names; drop blank ones.
+    // Drop blank-name exercises, then prune untouched suggestion-only sets and the
+    // exercises left empty by that. Session-level fields (notes/RPE/bodyweight)
+    // are preserved by pruneEntry even if every exercise drops out.
+    const named = (entry.exercises || []).filter((ex) => (ex.nameSnapshot || '').trim());
+    const pruned = pruneEntry({ ...entry, exercises: named });
+    // Resolve catalog ids for the surviving exercises.
     let cat = catalog;
-    const exercises = (entry.exercises || [])
-      .filter((ex) => (ex.nameSnapshot || '').trim())
-      .map((ex) => {
-        const name = ex.nameSnapshot.trim();
-        const r = ensureExercise(cat, name);
-        cat = r.catalog;
-        return { ...ex, nameSnapshot: name, exerciseId: r.exercise.id };
-      });
+    const exercises = pruned.exercises.map((ex) => {
+      const name = ex.nameSnapshot.trim();
+      const r = ensureExercise(cat, name);
+      cat = r.catalog;
+      return { ...ex, nameSnapshot: name, exerciseId: r.exercise.id };
+    });
     if (cat !== catalog) persistCatalog(cat);
-    persistJournal(upsertEntry(journal, withUpdatedAt({ ...entry, exercises }, Date.now())));
+    persistJournal(upsertEntry(journal, withUpdatedAt({ ...pruned, exercises }, Date.now())));
     setLogDraft(null);
     setView('history');
   };
@@ -1888,7 +1908,7 @@ export default function App() {
           <HistoryView journal={journal} onNew={openAdhocLog} onOpen={openEditLog} onRequestDelete={requestJournalDelete} />
         )}
         {view === 'logEditor' && logDraft && (
-          <LogEditorView draft={logDraft} mode={logMode} onSave={saveLog} onCancel={cancelLog} />
+          <LogEditorView draft={logDraft} mode={logMode} suggestions={logSuggestions} onSave={saveLog} onCancel={cancelLog} />
         )}
         {view === 'configure' && presetConfig && (
           <ConfigureView

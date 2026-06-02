@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { Plus, Trash2, ChevronDown, ChevronUp, Check } from 'lucide-react';
 import { NavBar, Group, GroupHeader, GroupFooter } from './ui.jsx';
-import { emptyExercise, emptySet, fieldsForMetric } from '../journal.js';
+import { emptyExercise, emptySet, fieldsForMetric, SET_NUMERIC_FIELDS } from '../journal.js';
 import { METRIC_KINDS } from '../catalog.js';
 
 const KIND_LABEL = {
@@ -30,8 +30,6 @@ const FIELD = {
   value: { label: 'Value', ph: 'value' },
 };
 
-const NUMERIC = ['weight', 'reps', 'rpe', 'timeSec', 'distance', 'value'];
-
 function numOrNull(v) {
   if (v === '' || v == null) return null;
   const n = Number(v);
@@ -50,7 +48,7 @@ function serialize(entry) {
       note: ex.note || '',
       sets: (ex.sets || []).map((s) => {
         const o = { ...s };
-        for (const f of NUMERIC) o[f] = numOrNull(s[f]);
+        for (const f of SET_NUMERIC_FIELDS) o[f] = numOrNull(s[f]);
         return o;
       }),
     })),
@@ -62,7 +60,7 @@ function inputVal(v) {
   return v == null ? '' : v;
 }
 
-export function LogEditorView({ draft, mode, onSave, onCancel }) {
+export function LogEditorView({ draft, mode, suggestions = {}, onSave, onCancel }) {
   const [entry, setEntry] = useState(draft);
   const [showDetails, setShowDetails] = useState(false);
 
@@ -88,6 +86,23 @@ export function LogEditorView({ draft, mode, onSave, onCancel }) {
       ...ex,
       sets: ex.sets.map((s, i) => (i === setIdx ? { ...s, ...p } : s)),
     }));
+
+  // Tapping the check on an empty set fills it from the suggestion and marks it
+  // done (one-tap "same as last time"); otherwise it just toggles done.
+  const confirmSet = (exIdx, setIdx) =>
+    updateExercise(exIdx, (ex) => {
+      const s = ex.sets[setIdx];
+      const sugg = suggestions[ex.exerciseId]?.[setIdx];
+      const empty = SET_NUMERIC_FIELDS.every((f) => s[f] == null || s[f] === '');
+      let ns;
+      if (!s.done && empty && sugg) {
+        ns = { ...s, done: true };
+        for (const f of fieldsForMetric(ex.metricKind)) if (sugg[f] != null) ns[f] = sugg[f];
+      } else {
+        ns = { ...s, done: !s.done };
+      }
+      return { ...ex, sets: ex.sets.map((x, i) => (i === setIdx ? ns : x)) };
+    });
 
   // Switching metric kind keeps rows; carries fields valid in both kinds.
   const changeMetric = (idx, kind) =>
@@ -194,12 +209,14 @@ export function LogEditorView({ draft, mode, onSave, onCancel }) {
                 </div>
 
                 {/* sets */}
-                {ex.sets.map((s, setIdx) => (
+                {ex.sets.map((s, setIdx) => {
+                  const sugg = suggestions[ex.exerciseId]?.[setIdx];
+                  return (
                   <div key={s.id} className="sep-row flex items-center gap-2 px-4 py-2">
                     <button
                       type="button"
-                      onClick={() => updateSet(exIdx, setIdx, { done: !s.done })}
-                      aria-label="Toggle set done"
+                      onClick={() => confirmSet(exIdx, setIdx)}
+                      aria-label="Confirm set"
                       className="press w-7 h-7 rounded-full flex items-center justify-center shrink-0 border"
                       style={{
                         background: s.done ? 'var(--color-accent)' : 'transparent',
@@ -218,7 +235,7 @@ export function LogEditorView({ draft, mode, onSave, onCancel }) {
                           value={inputVal(s[f])}
                           onChange={(e) => updateSet(exIdx, setIdx, { [f]: e.target.value })}
                           onFocus={(e) => e.target.select()}
-                          placeholder={FIELD[f].ph}
+                          placeholder={sugg?.[f] != null ? String(sugg[f]) : FIELD[f].ph}
                           className="min-w-0 flex-1 bg-[var(--color-cell-pressed)] rounded-lg px-2 py-1.5 text-[15px] text-white text-center tabular placeholder:text-[var(--color-tertiary)] focus:outline-none"
                         />
                       ))}
@@ -232,7 +249,8 @@ export function LogEditorView({ draft, mode, onSave, onCancel }) {
                       <Trash2 size={13} strokeWidth={2.2} />
                     </button>
                   </div>
-                ))}
+                  );
+                })}
 
                 {/* per-exercise note + add set */}
                 <div className="px-4 py-2">
