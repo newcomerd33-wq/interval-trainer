@@ -196,6 +196,51 @@ export function seedExercisesForLog({ derived, catalog, journal, beforeDate, exc
   return { catalog: cat, exercises };
 }
 
+// --- logged-set detection + pruning ------------------------------------------
+
+export const SET_NUMERIC_FIELDS = ['weight', 'reps', 'rpe', 'timeSec', 'distance', 'value'];
+
+// A set counts as "logged" (vs. an untouched suggestion) if it's marked done or
+// has any value entered. Underpins suggestions-until-confirmed: placeholders that
+// the user never touched are NOT logged and get dropped on save.
+export function isLoggedSet(set) {
+  if (!set) return false;
+  if (set.done) return true;
+  return SET_NUMERIC_FIELDS.some((f) => set[f] != null && set[f] !== '');
+}
+
+// Drop unlogged sets, then drop exercises left with no logged sets (note-only
+// exercises included — per-exercise notes annotate sets; general commentary
+// belongs in the session-level notes field).
+export function pruneEntry(entry) {
+  const exercises = (entry.exercises || [])
+    .map((ex) => ({ ...ex, sets: (ex.sets || []).filter(isLoggedSet) }))
+    .filter((ex) => ex.sets.length > 0);
+  return { ...entry, exercises };
+}
+
+// --- history / suggestions (structured; view formats) ------------------------
+
+// The most recent prior session's sets for an exercise — positional placeholders
+// for "same as last time". Honors beforeDate/excludeId like lastExerciseLogged.
+export function suggestionsForExercise(journal, exerciseId, opts = {}) {
+  const ex = lastExerciseLogged(journal, exerciseId, opts);
+  return ex ? ex.sets || [] : [];
+}
+
+// The last `n` sessions containing the exercise, newest first, as structured
+// { date, loggedAt, sets } — for the in-timer history hint/strip.
+export function recentSessionsForExercise(journal, exerciseId, n = 3) {
+  const out = [];
+  const sorted = [...(journal || [])].sort(cmpEntryDesc);
+  for (const e of sorted) {
+    const ex = (e.exercises || []).find((x) => x.exerciseId === exerciseId);
+    if (ex) out.push({ date: e.date, loggedAt: e.loggedAt, sets: ex.sets || [] });
+    if (out.length >= n) break;
+  }
+  return out;
+}
+
 // --- list ops ----------------------------------------------------------------
 
 export function upsertEntry(journal, entry) {

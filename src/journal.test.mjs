@@ -19,6 +19,10 @@ import {
   removeEntry,
   withUpdatedAt,
   fieldsForMetric,
+  isLoggedSet,
+  pruneEntry,
+  suggestionsForExercise,
+  recentSessionsForExercise,
 } from './journal.js';
 
 // deterministic id generator
@@ -208,6 +212,58 @@ test('upsertEntry prepends new, replaces existing in place', () => {
 
 test('removeEntry drops by id', () => {
   assert.deepEqual(removeEntry([{ id: 'a' }, { id: 'b' }], 'a'), [{ id: 'b' }]);
+});
+
+// --- logged-set detection + pruning ------------------------------------------
+
+test('isLoggedSet: done or any value = logged; all-null = not', () => {
+  assert.equal(isLoggedSet({ done: true }), true);
+  assert.equal(isLoggedSet({ done: false, weight: 100 }), true);
+  assert.equal(isLoggedSet({ done: false, reps: 0 }), true); // 0 is a real value
+  assert.equal(isLoggedSet({ done: false, weight: null, reps: null }), false);
+  assert.equal(isLoggedSet({ done: false, weight: '' }), false); // empty string is not
+  assert.equal(isLoggedSet(null), false);
+});
+
+test('pruneEntry drops unlogged sets and note-only exercises', () => {
+  const entry = {
+    sessionName: 'x',
+    notes: 'kept',
+    exercises: [
+      { nameSnapshot: 'Squat', note: '', sets: [{ weight: 100, done: false }, { weight: null, done: false }] },
+      { nameSnapshot: 'Bench', note: '', sets: [{ done: true }] },
+      { nameSnapshot: 'Note only', note: 'felt tight', sets: [{ weight: null, done: false }] },
+    ],
+  };
+  const pruned = pruneEntry(entry);
+  assert.equal(pruned.notes, 'kept');
+  assert.equal(pruned.exercises.length, 2); // "Note only" dropped
+  assert.equal(pruned.exercises[0].sets.length, 1); // unlogged Squat set dropped
+  assert.equal(pruned.exercises[1].nameSnapshot, 'Bench');
+});
+
+test('suggestionsForExercise returns most-recent prior session sets', () => {
+  const j = [
+    { id: 'a', date: '2026-05-30', loggedAt: 1, exercises: [{ exerciseId: 'sq', sets: [{ weight: 200 }] }] },
+    { id: 'b', date: '2026-06-02', loggedAt: 2, exercises: [{ exerciseId: 'sq', sets: [{ weight: 225 }, { weight: 230 }] }] },
+  ];
+  assert.deepEqual(suggestionsForExercise(j, 'sq').map((s) => s.weight), [225, 230]);
+  // beforeDate ceiling excludes the newer session
+  assert.deepEqual(suggestionsForExercise(j, 'sq', { beforeDate: '2026-05-31' }).map((s) => s.weight), [200]);
+  assert.deepEqual(suggestionsForExercise(j, 'missing'), []);
+});
+
+test('recentSessionsForExercise returns last n, newest first, structured', () => {
+  const j = [
+    { id: 'a', date: '2026-05-20', loggedAt: 1, exercises: [{ exerciseId: 'sq', sets: [{ weight: 185 }] }] },
+    { id: 'b', date: '2026-05-27', loggedAt: 2, exercises: [{ exerciseId: 'sq', sets: [{ weight: 200 }] }] },
+    { id: 'c', date: '2026-06-03', loggedAt: 3, exercises: [{ exerciseId: 'sq', sets: [{ weight: 225 }] }] },
+    { id: 'd', date: '2026-06-03', loggedAt: 4, exercises: [{ exerciseId: 'other', sets: [] }] },
+  ];
+  const recent = recentSessionsForExercise(j, 'sq', 2);
+  assert.equal(recent.length, 2);
+  assert.deepEqual(recent.map((r) => r.date), ['2026-06-03', '2026-05-27']);
+  assert.equal(recent[0].sets[0].weight, 225);
 });
 
 test('withUpdatedAt bumps only updatedAt', () => {

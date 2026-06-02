@@ -16,6 +16,9 @@ export const KEYS = {
   exercises: 'interval-trainer-exercises-v1',
   journal: 'interval-trainer-journal-v1',
   schedule: 'interval-trainer-schedule-v1',
+  // Crash-recovery only: the in-progress workout log. Deliberately NOT part of
+  // the backup shape — it's transient session state, not durable data.
+  activeLog: 'interval-trainer-active-log-v1',
 };
 
 // Default empty value per store. Schedule is an object of three lists; the rest
@@ -64,6 +67,13 @@ export function loadSchedule() {
   return { rules: s.rules || [], oneOffs: s.oneOffs || [], exceptions: s.exceptions || [] };
 }
 export const saveSchedule = (v) => saveStore(KEYS.schedule, v);
+
+// Active in-progress workout log (crash recovery). Null when none. Not backed up.
+export const loadActiveLog = () => loadStore(KEYS.activeLog, null);
+export const saveActiveLog = (v) => saveStore(KEYS.activeLog, v);
+export function clearActiveLog() {
+  try { localStorage.removeItem(KEYS.activeLog); } catch {}
+}
 
 // --- unified backup (pure) ---------------------------------------------------
 
@@ -115,12 +125,15 @@ export function exportAll() {
   });
 }
 
-// Overwrites every store from a (already parsed + validated) backup.
+// Overwrites every durable store from a (already parsed + validated) backup.
+// Clears any active in-progress draft — it belongs to the pre-import session and
+// would be mismatched against the restored data.
 export function importAll(backup) {
   const b = parseBackup(backup);
   saveLibrary(b.library);
   saveExercises(b.exercises);
   saveJournal(b.journal);
   saveSchedule(b.schedule);
+  clearActiveLog();
   return b;
 }
