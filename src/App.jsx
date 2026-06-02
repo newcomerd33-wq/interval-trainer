@@ -8,11 +8,10 @@ import { TabBar } from './views/TabBar.jsx';
 import { HistoryView } from './views/HistoryView.jsx';
 import { LogEditorView } from './views/LogEditorView.jsx';
 import { DataBackup } from './views/DataBackup.jsx';
-import { InTimerLog } from './views/InTimerLog.jsx';
 import { loadLibrary, saveLibrary, loadJournal, saveJournal, loadExercises, saveExercises, loadSchedule, buildBackup, loadActiveLog, saveActiveLog, clearActiveLog } from './storage.js';
 import { exercisesForItem, expandSetsFromSlots } from './exercises.js';
 import { ensureExercise, findExercise, normalizeExerciseName } from './catalog.js';
-import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt, suggestionsForExercise, recentSessionsForExercise, pruneEntry, isLoggedSet } from './journal.js';
+import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt, suggestionsForExercise, recentSessionsForExercise, lastExerciseLogged, emptySet, fieldsForMetric, pruneEntry, hasLoggedContent } from './journal.js';
 import { todayKey } from './date.js';
 
 // Boxing bell samples (Vite resolves these to hashed URLs at build time)
@@ -1313,7 +1312,7 @@ function ProgressRing({ progress, color, size = 260, stroke = 6 }) {
   );
 }
 
-function TimerView({ session, onBack, onLogResult, activeLog, exerciseHistory = {}, onStartDraft, onUpdateDraft, onReviewSave }) {
+function TimerView({ session, onBack, onLogResult, activeLog, exerciseHistory = {}, onStartDraft, onUpdateDraft }) {
   const slots = session.slots;
   const totalSlots = slots.length;
 
@@ -1322,9 +1321,9 @@ function TimerView({ session, onBack, onLogResult, activeLog, exerciseHistory = 
   const [running, setRunning] = useState(false);
   const [preCount, setPreCount] = useState(null);
   const [audioOn, setAudioOn] = useState(true);
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [sheetTarget, setSheetTarget] = useState({ exIdx: 0, setIdx: 0 });
-  const [wasRunning, setWasRunning] = useState(false);
+  // Inline logger: while an input is focused we "freeze" its target so a round
+  // flip mid-typing doesn't yank the fields to the next exercise.
+  const [frozenTarget, setFrozenTarget] = useState(null); // { exName, setIdx } | null
   const prevIdxRef = useRef(0);
   const midRef = useRef(false);
 
@@ -1418,30 +1417,58 @@ function TimerView({ session, onBack, onLogResult, activeLog, exerciseHistory = 
     else setSecondsLeft(slots[j].duration);
   };
 
-  // Open the in-timer log sheet: pause the clock and snapshot the current slot's
-  // exercise/set so the sheet doesn't retarget as time would advance.
-  const openSheet = () => {
-    const slot = slots[currentIdx];
-    if (!slot || slot.isRest) return;
-    const draft = activeLog || (onStartDraft && onStartDraft());
+  // The "live" inline-log target derived from the timer: the most recent working
+  // slot at/before now, and which set number that is for its exercise (the slot
+  // IS the set). Null during the lead-in before any work.
+  const liveTarget = (() => {
+    let i = Math.min(currentIdx, totalSlots - 1);
+    while (i >= 0 && slots[i]?.isRest) i--;
+    if (i < 0) return null;
+    const name = slots[i].name;
+    const key = normalizeExerciseName(name);
+    let setIdx = -1;
+    for (let j = 0; j <= i; j++) if (!slots[j].isRest && normalizeExerciseName(slots[j].name) === key) setIdx++;
+    return { exName: name, setIdx: Math.max(0, setIdx) };
+  })();
+  // Frozen while typing, otherwise follows the timer.
+  const logTarget = frozenTarget || liveTarget;
+
+  // Write a single field for the target set, lazily creating the draft and
+  // padding sets if needed. Auto-saves immediately (App persists).
+  const commitLog = (exName, setIdx, field, value) => {
+    let draft = activeLog || (onStartDraft && onStartDraft());
     if (!draft) return;
-    const key = normalizeExerciseName(slot.name);
+    const key = normalizeExerciseName(exName);
     const exIdx = draft.exercises.findIndex((e) => normalizeExerciseName(e.nameSnapshot) === key);
-    let setIdx = 0;
-    if (exIdx >= 0) {
-      const sets = draft.exercises[exIdx].sets;
-      const firstUnlogged = sets.findIndex((s) => !isLoggedSet(s));
-      setIdx = firstUnlogged >= 0 ? firstUnlogged : Math.max(0, sets.length - 1);
-    }
-    setSheetTarget({ exIdx: exIdx < 0 ? 0 : exIdx, setIdx });
-    setWasRunning(running);
-    setRunning(false);
-    setSheetOpen(true);
+    if (exIdx < 0) return;
+    const ex = draft.exercises[exIdx];
+    const sets = ex.sets.slice();
+    while (sets.length <= setIdx) sets.push(emptySet(ex.metricKind));
+    sets[setIdx] = { ...sets[setIdx], [field]: value };
+    onUpdateDraft({ ...draft, exercises: draft.exercises.map((e, i) => (i === exIdx ? { ...ex, sets } : e)) });
   };
-  const closeSheet = () => {
-    setSheetOpen(false);
-    if (wasRunning && !isComplete) setRunning(true); // resume only if still mid-run
-    setWasRunning(false);
+
+  // Tap the check: fill an empty set from the suggestion + mark done, else toggle.
+  const confirmLog = (exName, setIdx) => {
+    let draft = activeLog || (onStartDraft && onStartDraft());
+    if (!draft) return;
+    const key = normalizeExerciseName(exName);
+    const exIdx = draft.exercises.findIndex((e) => normalizeExerciseName(e.nameSnapshot) === key);
+    if (exIdx < 0) return;
+    const ex = draft.exercises[exIdx];
+    const sets = ex.sets.slice();
+    while (sets.length <= setIdx) sets.push(emptySet(ex.metricKind));
+    const s = sets[setIdx];
+    const sugg = exerciseHistory[key]?.suggestions?.[setIdx];
+    const empty = ['weight', 'reps', 'rpe', 'timeSec', 'distance', 'value'].every((f) => s[f] == null || s[f] === '');
+    if (!s.done && empty && sugg) {
+      const ns = { ...s, done: true };
+      for (const f of Object.keys(sugg)) if (sugg[f] != null && f in ns) ns[f] = sugg[f];
+      sets[setIdx] = ns;
+    } else {
+      sets[setIdx] = { ...s, done: !s.done };
+    }
+    onUpdateDraft({ ...draft, exercises: draft.exercises.map((e, i) => (i === exIdx ? { ...ex, sets } : e)) });
   };
 
   const showPre = preCount !== null;
@@ -1510,16 +1537,6 @@ function TimerView({ session, onBack, onLogResult, activeLog, exerciseHistory = 
 
           <div className="text-center mt-7 px-4">
             <div className="text-[22px] font-semibold tracking-tight">{currentSlot.name}</div>
-            {(() => {
-              const h = exerciseHistory[normalizeExerciseName(currentSlot.name)];
-              const last = h?.recent?.[0];
-              if (!last) return null;
-              return (
-                <div className="mt-1 text-[12px] text-[var(--color-tertiary)] tabular truncate">
-                  Last: {last.sets.map((s) => (s.weight != null ? `${s.weight}×${s.reps ?? '–'}` : s.reps != null ? `${s.reps}` : s.timeSec != null ? `${s.timeSec}s` : '–')).join(' · ')}
-                </div>
-              );
-            })()}
             <div className="mt-1 text-[14px] text-[var(--color-secondary)]">
               {currentSlot.isRest && 'Recover'}
               {currentSlot.side === 'L' && 'Left side'}
@@ -1530,6 +1547,45 @@ function TimerView({ session, onBack, onLogResult, activeLog, exerciseHistory = 
               {!currentSlot.side && !currentSlot.alternating && !currentSlot.combined && !currentSlot.unilateral && !currentSlot.isRest && 'Both sides'}
             </div>
           </div>
+
+          {logTarget && (() => {
+            const key = normalizeExerciseName(logTarget.exName);
+            const h = exerciseHistory[key];
+            const draftEx = activeLog?.exercises.find((e) => normalizeExerciseName(e.nameSnapshot) === key);
+            const metricKind = h?.metricKind || draftEx?.metricKind || 'weight_reps';
+            const fields = fieldsForMetric(metricKind);
+            const curSet = draftEx?.sets?.[logTarget.setIdx];
+            const sugg = h?.suggestions?.[logTarget.setIdx];
+            const last = h?.recent?.[0];
+            const PH = { weight: 'wt', reps: 'reps', rpe: 'rpe', timeSec: 'sec', distance: 'dist', value: 'val' };
+            const iv = (v) => (v == null ? '' : v);
+            return (
+              <div className="mt-4 px-4">
+                <div className="flex items-center justify-center gap-2">
+                  <span className="text-[12px] text-[var(--color-secondary)] shrink-0">{logTarget.exName !== currentSlot.name ? `${logTarget.exName} · ` : ''}Set {logTarget.setIdx + 1}</span>
+                  {fields.map((f) => (
+                    <input key={f} type="text" inputMode="decimal"
+                      value={iv(curSet?.[f])}
+                      onChange={(e) => commitLog(logTarget.exName, logTarget.setIdx, f, e.target.value)}
+                      onFocus={(e) => { e.target.select(); setFrozenTarget(logTarget); }}
+                      onBlur={() => setFrozenTarget(null)}
+                      placeholder={sugg?.[f] != null ? String(sugg[f]) : PH[f]}
+                      className="w-16 bg-[var(--color-cell)] rounded-lg px-2 py-2 text-[17px] text-white text-center tabular placeholder:text-[var(--color-tertiary)] focus:outline-none" />
+                  ))}
+                  <button type="button" onClick={() => confirmLog(logTarget.exName, logTarget.setIdx)} aria-label="Confirm set"
+                    className="press w-9 h-9 rounded-full flex items-center justify-center shrink-0 border"
+                    style={{ background: curSet?.done ? ringColor : 'transparent', borderColor: curSet?.done ? ringColor : 'var(--color-sep)' }}>
+                    {curSet?.done && <Check size={16} strokeWidth={3} className="text-black" />}
+                  </button>
+                </div>
+                {last && (
+                  <div className="text-center text-[12px] text-[var(--color-tertiary)] mt-1.5 tabular truncate">
+                    Last: {last.sets.map((s) => (s.weight != null ? `${s.weight}×${s.reps ?? '–'}` : s.reps != null ? `${s.reps}` : s.timeSec != null ? `${s.timeSec}s` : '–')).join(' · ')}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {nextSlot && (
             <>
@@ -1584,13 +1640,6 @@ function TimerView({ session, onBack, onLogResult, activeLog, exerciseHistory = 
             Run again
           </button>
         )}
-        {hasStarted && !isComplete && currentSlot && !currentSlot.isRest && onStartDraft && (
-          <button type="button" onClick={openSheet}
-            className="press w-full h-12 rounded-2xl bg-[var(--color-cell)] text-[15px] font-medium inline-flex items-center justify-center gap-2">
-            <ClipboardList size={15} strokeWidth={2.5} />
-            Log set
-          </button>
-        )}
         {hasStarted && !isComplete && (
           <div className="grid grid-cols-2 gap-2">
             <button type="button" onClick={skip}
@@ -1619,18 +1668,6 @@ function TimerView({ session, onBack, onLogResult, activeLog, exerciseHistory = 
           <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${audioOn ? 'translate-x-6' : 'translate-x-1'}`} />
         </button>
       </div>
-
-      {sheetOpen && (
-        <InTimerLog
-          open={sheetOpen}
-          onClose={closeSheet}
-          draft={activeLog}
-          target={sheetTarget}
-          exerciseHistory={exerciseHistory}
-          onChange={onUpdateDraft}
-          onReviewSave={() => { closeSheet(); onReviewSave && onReviewSave(); }}
-        />
-      )}
     </div>
   );
 }
@@ -1860,6 +1897,10 @@ export default function App() {
   };
 
   const openLogFromTimer = () => {
+    // If sets were already logged inline during the workout, finalize that draft
+    // instead of seeding a fresh blank log. (3b adds a dedicated completion button
+    // + resume banner; this keeps inline-logged data reachable in the meantime.)
+    if (activeLog && hasLoggedContent(activeLog)) { openReviewFromDraft(); return; }
     const s = buildCurrentSession();
     const derived = s ? expandSetsFromSlots(s.slots) : [];
     // Don't persist the catalog at open time — saveLog resolves + persists names
@@ -1992,10 +2033,12 @@ export default function App() {
       if (map[key]) continue;
       const ex = findExercise(catalog, d.name);
       if (!ex) continue;
+      const prev = lastExerciseLogged(journal, ex.id, { beforeDate: todayKey() });
       map[key] = {
         exerciseId: ex.id,
+        metricKind: prev?.metricKind || ex.defaultMetricKind || 'weight_reps',
         recent: recentSessionsForExercise(journal, ex.id, 3),
-        suggestions: suggestionsForExercise(journal, ex.id, { beforeDate: todayKey() }),
+        suggestions: prev?.sets || [],
       };
     }
     return map;
@@ -2061,7 +2104,6 @@ export default function App() {
             exerciseHistory={exerciseHistory}
             onStartDraft={startActiveDraft}
             onUpdateDraft={persistActiveLog}
-            onReviewSave={openReviewFromDraft}
           />
         )}
         <SaveDialog open={saveOpen} defaultName={defaultName} onClose={() => setSaveOpen(false)} onSave={saveCurrent} />
