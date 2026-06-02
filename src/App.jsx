@@ -8,10 +8,11 @@ import { TabBar } from './views/TabBar.jsx';
 import { HistoryView } from './views/HistoryView.jsx';
 import { LogEditorView } from './views/LogEditorView.jsx';
 import { DataBackup } from './views/DataBackup.jsx';
+import { ReviewLog } from './views/ReviewLog.jsx';
 import { loadLibrary, saveLibrary, loadJournal, saveJournal, loadExercises, saveExercises, loadSchedule, buildBackup, loadActiveLog, saveActiveLog, clearActiveLog } from './storage.js';
 import { exercisesForItem, expandSetsFromSlots } from './exercises.js';
 import { ensureExercise, findExercise, normalizeExerciseName } from './catalog.js';
-import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt, suggestionsForExercise, recentSessionsForExercise, lastExerciseLogged, emptySet, fieldsForMetric, pruneEntry, hasLoggedContent } from './journal.js';
+import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt, suggestionsForExercise, recentSessionsForExercise, lastExerciseLogged, emptySet, fieldsForMetric, pruneEntry, hasLoggedContent, isLoggedSet } from './journal.js';
 import { todayKey } from './date.js';
 
 // Boxing bell samples (Vite resolves these to hashed URLs at build time)
@@ -717,6 +718,24 @@ function SaveDialog({ open, defaultName, onClose, onSave }) {
 // =============================================================================
 // CONFIGURE (preset)
 // =============================================================================
+function LeaveTimerDialog({ open, onClose, onReview, onKeep, onDiscard }) {
+  return (
+    <CenterCard open={open} onClose={onClose}>
+      <div className="p-5 text-center">
+        <div className="text-[17px] font-semibold">Leave workout?</div>
+        <div className="text-[13px] text-[var(--color-secondary)] mt-1">
+          You have logged sets. Save them now, keep for later, or discard.
+        </div>
+      </div>
+      <div className="flex flex-col border-t border-white/10 divide-y divide-white/10">
+        <button type="button" onClick={onReview} className="press h-11 text-[15px] text-[var(--color-accent)] font-semibold">Review &amp; save</button>
+        <button type="button" onClick={onKeep} className="press h-11 text-[15px] text-[var(--color-accent)]">Keep for later</button>
+        <button type="button" onClick={onDiscard} className="press h-11 text-[15px] text-red-400">Discard</button>
+      </div>
+    </CenterCard>
+  );
+}
+
 function SavePromptDialog({ open, originalName, onClose, onUpdate, onSaveAsNew }) {
   return (
     <CenterCard open={open} onClose={onClose}>
@@ -1312,7 +1331,7 @@ function ProgressRing({ progress, color, size = 260, stroke = 6 }) {
   );
 }
 
-function TimerView({ session, onBack, onLogResult, activeLog, exerciseHistory = {}, onStartDraft, onUpdateDraft }) {
+function TimerView({ session, onRequestBack, onLogResult, onReview, activeLogHasContent, activeLog, exerciseHistory = {}, onStartDraft, onUpdateDraft }) {
   const slots = session.slots;
   const totalSlots = slots.length;
 
@@ -1502,7 +1521,7 @@ function TimerView({ session, onBack, onLogResult, activeLog, exerciseHistory = 
 
   return (
     <div className="slideIn pb-8">
-      <NavBar title={session.type === 'custom' ? 'Custom' : 'Workout'} leftLabel="Setup" onLeft={onBack} />
+      <NavBar title={session.type === 'custom' ? 'Custom' : 'Workout'} leftLabel="Setup" onLeft={onRequestBack} />
 
       <div className="px-4 mt-1">
         <div className="h-[2px] rounded-full bg-[var(--color-cell)] overflow-hidden">
@@ -1631,18 +1650,24 @@ function TimerView({ session, onBack, onLogResult, activeLog, exerciseHistory = 
             Pause
           </button>
         )}
-        {isComplete && onLogResult && (
+        {isComplete && (activeLogHasContent ? (
+          <button type="button" onClick={onReview}
+            className="press w-full h-14 rounded-2xl text-[17px] font-semibold inline-flex items-center justify-center gap-2"
+            style={{ background: ringColor, color: '#000' }}>
+            <ClipboardList size={18} strokeWidth={2.5} />
+            Review &amp; save
+          </button>
+        ) : onLogResult ? (
           <button type="button" onClick={onLogResult}
             className="press w-full h-14 rounded-2xl text-[17px] font-semibold inline-flex items-center justify-center gap-2"
             style={{ background: ringColor, color: '#000' }}>
             <ClipboardList size={18} strokeWidth={2.5} />
             Log result
           </button>
-        )}
+        ) : null)}
         {isComplete && (
           <button type="button" onClick={start}
-            className={`press w-full h-14 rounded-2xl text-[17px] font-semibold inline-flex items-center justify-center gap-2 ${onLogResult ? 'bg-[var(--color-cell)]' : ''}`}
-            style={onLogResult ? undefined : { background: ringColor, color: '#000' }}>
+            className="press w-full h-14 rounded-2xl text-[17px] font-semibold inline-flex items-center justify-center gap-2 bg-[var(--color-cell)]">
             <Play size={18} strokeWidth={2.5} fill="currentColor" />
             Run again
           </button>
@@ -1703,6 +1728,9 @@ export default function App() {
   const [logReturnTo, setLogReturnTo] = useState('history');
   const [pendingJournalDelete, setPendingJournalDelete] = useState(null);
   const [activeLog, setActiveLog] = useState(() => loadActiveLog()); // in-progress workout draft
+  const [reviewOpen, setReviewOpen] = useState(false); // in-timer review sheet
+  const [pendingTimerBack, setPendingTimerBack] = useState(false); // leave-timer prompt
+  const [pendingDiscardDraft, setPendingDiscardDraft] = useState(false);
 
   const persist = (next) => { setLibrary(next); saveLibrary(next); };
   const persistJournal = (next) => { setJournal(next); saveJournal(next); };
@@ -1903,11 +1931,9 @@ export default function App() {
     setView('logEditor');
   };
 
+  // Fresh end-of-timer log (no inline draft). When a draft has content, the
+  // completion screen routes to the review sheet instead, so this stays simple.
   const openLogFromTimer = () => {
-    // If sets were already logged inline during the workout, finalize that draft
-    // instead of seeding a fresh blank log. (3b adds a dedicated completion button
-    // + resume banner; this keeps inline-logged data reachable in the meantime.)
-    if (activeLog && hasLoggedContent(activeLog)) { openReviewFromDraft(); return; }
     const s = buildCurrentSession();
     const derived = s ? expandSetsFromSlots(s.slots) : [];
     // Don't persist the catalog at open time — saveLog resolves + persists names
@@ -1947,13 +1973,14 @@ export default function App() {
     return draft;
   };
 
-  // Finalize the active draft through the editor (review & save).
+  // Open the full editor on the active draft. Reachable from the timer completion
+  // and from the resume banner on a top-level view, so return to wherever we are.
   const openReviewFromDraft = () => {
     if (!activeLog) return;
     setLogDraft(activeLog);
     setLogSuggestions(buildSuggestions(activeLog.exercises, { beforeDate: activeLog.date }));
     setLogMode('create');
-    setLogReturnTo('timer');
+    setLogReturnTo(view === 'timer' ? 'timer' : 'history');
     setView('logEditor');
   };
 
@@ -1974,13 +2001,13 @@ export default function App() {
     setView('logEditor');
   };
 
-  const saveLog = (entry) => {
-    // Drop blank-name exercises, then prune untouched suggestion-only sets and the
-    // exercises left empty by that. Session-level fields (notes/RPE/bodyweight)
-    // are preserved by pruneEntry even if every exercise drops out.
+  // Shared finalize path: drop blank-name exercises, prune untouched
+  // suggestion-only sets and the exercises left empty, resolve catalog ids, then
+  // upsert. Used by BOTH the full editor and the in-timer review so pruning +
+  // catalog resolution stay identical.
+  const commitEntryToJournal = (entry) => {
     const named = (entry.exercises || []).filter((ex) => (ex.nameSnapshot || '').trim());
     const pruned = pruneEntry({ ...entry, exercises: named });
-    // Resolve catalog ids for the surviving exercises.
     let cat = catalog;
     const exercises = pruned.exercises.map((ex) => {
       const name = ex.nameSnapshot.trim();
@@ -1990,10 +2017,31 @@ export default function App() {
     });
     if (cat !== catalog) persistCatalog(cat);
     persistJournal(upsertEntry(journal, withUpdatedAt({ ...pruned, exercises }, Date.now())));
+  };
+
+  const saveLog = (entry) => {
+    commitEntryToJournal(entry);
     // If this was the in-progress workout draft, clear it (and its provenance).
     if (activeLog && activeLog.id === entry.id) { persistActiveLog(null); setPendingOrigin(null); }
     setLogDraft(null);
     setView('history');
+  };
+
+  // Save-to-history from the in-timer review sheet (same commit path as the editor).
+  const finalizeActiveDraft = () => {
+    if (!activeLog) return;
+    commitEntryToJournal(activeLog);
+    persistActiveLog(null);
+    setPendingOrigin(null);
+    setReviewOpen(false);
+    setView('history');
+  };
+
+  const discardActiveDraft = () => {
+    persistActiveLog(null);
+    setPendingOrigin(null);
+    setReviewOpen(false);
+    setPendingDiscardDraft(false);
   };
 
   const cancelLog = () => { setLogDraft(null); setView(logReturnTo); };
@@ -2013,6 +2061,17 @@ export default function App() {
     setCatalog(parsed.exercises);
     setLoadedFromId(null);
     setActiveLog(null); // importAll() cleared localStorage; clear in-memory state too
+  };
+
+  // --- in-timer draft lifecycle --------------------------------------------
+  const draftHasContent = !!activeLog && hasLoggedContent(activeLog);
+  const draftSetCount = activeLog
+    ? activeLog.exercises.reduce((n, ex) => n + (ex.sets || []).filter(isLoggedSet).length, 0)
+    : 0;
+  const timerBack = () => setView(mode === 'custom' ? 'customBuilder' : mode === 'rotation' ? 'rotationBuilder' : 'configure');
+  const onRequestBack = () => {
+    if (draftHasContent) setPendingTimerBack(true);
+    else timerBack();
   };
 
   // --- tab bar --------------------------------------------------------------
@@ -2055,6 +2114,16 @@ export default function App() {
   return (
     <div style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
       <div className={`max-w-[440px] mx-auto ${showTabBar ? 'pb-24' : ''}`}>
+        {showTabBar && draftHasContent && !reviewOpen && (
+          <div className="mx-4 mt-2 rounded-xl bg-[var(--color-cell)] px-3 py-2 flex items-center gap-2">
+            <div className="flex-1 min-w-0 text-[13px]">
+              <span className="text-white font-medium">Unsaved workout</span>
+              <span className="text-[var(--color-secondary)]"> · {draftSetCount} set{draftSetCount === 1 ? '' : 's'} logged</span>
+            </div>
+            <button type="button" onClick={() => setReviewOpen(true)} className="press text-[14px] font-semibold text-[var(--color-accent)] px-2 py-1">Review log</button>
+            <button type="button" onClick={() => setPendingDiscardDraft(true)} className="press text-[14px] text-[var(--color-secondary)] px-1 py-1">Discard</button>
+          </div>
+        )}
         {view === 'wizard' && (
           <Wizard onPickConfig={pickPreset} onPickCustom={pickCustom} onPickRotation={pickRotation} />
         )}
@@ -2105,8 +2174,10 @@ export default function App() {
         {view === 'timer' && session && (
           <TimerView
             session={session}
-            onBack={() => setView(mode === 'custom' ? 'customBuilder' : mode === 'rotation' ? 'rotationBuilder' : 'configure')}
+            onRequestBack={onRequestBack}
             onLogResult={openLogFromTimer}
+            onReview={() => setReviewOpen(true)}
+            activeLogHasContent={draftHasContent}
             activeLog={activeLog}
             exerciseHistory={exerciseHistory}
             onStartDraft={startActiveDraft}
@@ -2133,6 +2204,30 @@ export default function App() {
           body={<><span className="text-white">{pendingJournalDelete?.sessionName || 'This workout'}</span> will be removed from your history. This can’t be undone.</>}
           onClose={() => setPendingJournalDelete(null)}
           onConfirm={confirmJournalDelete}
+        />
+        <ReviewLog
+          open={reviewOpen}
+          draft={activeLog}
+          onClose={() => setReviewOpen(false)}
+          onSave={finalizeActiveDraft}
+          onOpenEditor={() => { setReviewOpen(false); openReviewFromDraft(); }}
+          onDiscard={() => { setReviewOpen(false); setPendingDiscardDraft(true); }}
+          onNotesChange={(notes) => persistActiveLog({ ...activeLog, notes })}
+        />
+        <LeaveTimerDialog
+          open={pendingTimerBack}
+          onClose={() => setPendingTimerBack(false)}
+          onReview={() => { setPendingTimerBack(false); setReviewOpen(true); }}
+          onKeep={() => { setPendingTimerBack(false); timerBack(); }}
+          onDiscard={() => { setPendingTimerBack(false); setPendingDiscardDraft(true); }}
+        />
+        <ConfirmDeleteDialog
+          open={pendingDiscardDraft}
+          title="Discard workout log?"
+          body={<>The sets you logged this workout will be removed. This can’t be undone.</>}
+          confirmLabel="Discard"
+          onClose={() => setPendingDiscardDraft(false)}
+          onConfirm={discardActiveDraft}
         />
       </div>
       {showTabBar && <TabBar active={activeTab} onSelect={selectTab} />}
