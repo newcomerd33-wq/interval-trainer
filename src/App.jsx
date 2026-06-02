@@ -9,7 +9,7 @@ import { HistoryView } from './views/HistoryView.jsx';
 import { LogEditorView } from './views/LogEditorView.jsx';
 import { DataBackup } from './views/DataBackup.jsx';
 import { ReviewLog } from './views/ReviewLog.jsx';
-import { loadLibrary, saveLibrary, loadJournal, saveJournal, loadExercises, saveExercises, loadSchedule, buildBackup, loadActiveLog, saveActiveLog, clearActiveLog } from './storage.js';
+import { loadLibrary, saveLibrary, loadJournal, saveJournal, loadExercises, saveExercises, loadSchedule, saveSchedule, buildBackup, loadActiveLog, saveActiveLog, clearActiveLog } from './storage.js';
 import { exercisesForItem, expandSetsFromSlots } from './exercises.js';
 import { ensureExercise, findExercise, normalizeExerciseName } from './catalog.js';
 import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt, suggestionsForExercise, recentSessionsForExercise, lastExerciseLogged, emptySet, fieldsForMetric, pruneEntry, hasLoggedContent, isLoggedSet } from './journal.js';
@@ -1746,6 +1746,7 @@ export default function App() {
   const [logReturnTo, setLogReturnTo] = useState('history');
   const [pendingJournalDelete, setPendingJournalDelete] = useState(null);
   const [activeLog, setActiveLog] = useState(() => loadActiveLog()); // in-progress workout draft
+  const [schedule, setSchedule] = useState(() => loadSchedule());
   const [reviewOpen, setReviewOpen] = useState(false); // in-timer review sheet
   const [pendingTimerBack, setPendingTimerBack] = useState(false); // leave-timer prompt
   const [pendingDiscardDraft, setPendingDiscardDraft] = useState(false);
@@ -1756,6 +1757,7 @@ export default function App() {
   const persistJournal = (next) => { setJournal(next); saveJournal(next); };
   const persistCatalog = (next) => { setCatalog(next); saveExercises(next); };
   const persistActiveLog = (next) => { setActiveLog(next); if (next) saveActiveLog(next); else clearActiveLog(); };
+  const persistSchedule = (next) => { setSchedule(next); saveSchedule(next); };
 
   const pickPreset = (config) => {
     setMode('preset');
@@ -2082,11 +2084,12 @@ export default function App() {
   };
 
   // --- backup ---------------------------------------------------------------
-  const getBackup = () => buildBackup({ library, exercises: catalog, journal, schedule: loadSchedule() });
+  const getBackup = () => buildBackup({ library, exercises: catalog, journal, schedule });
   const onImported = (parsed) => {
     setLibrary(parsed.library);
     setJournal(parsed.journal);
     setCatalog(parsed.exercises);
+    setSchedule(parsed.schedule);
     setLoadedFromId(null);
     setActiveLog(null); // importAll() cleared localStorage; clear in-memory state too
   };
