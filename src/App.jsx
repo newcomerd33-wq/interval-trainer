@@ -2066,7 +2066,9 @@ export default function App() {
     // If this was the in-progress workout draft, clear it (and its provenance).
     if (activeLog && activeLog.id === entry.id) { persistActiveLog(null); setPendingOrigin(null); }
     setLogDraft(null);
-    setView('history');
+    // Calendar-origin logs return to the calendar (see the day go green); others
+    // land in History to confirm the new entry.
+    setView(logReturnTo === 'calendar' ? 'calendar' : 'history');
   };
 
   // Save-to-history from the in-timer review sheet (same commit path as the editor).
@@ -2126,8 +2128,9 @@ export default function App() {
     onAddOneOff: (date, item) => {
       persistSchedule(addOneOff(schedule, { id: uid(), date, libraryId: item.id, name: item.name, status: 'planned', createdAt: Date.now() }));
     },
-    onAddWeekly: (item, daysOfWeek) => {
-      persistSchedule(addRule(schedule, { id: uid(), libraryId: item.id, name: item.name, kind: 'weekly', daysOfWeek, createdAt: Date.now() }));
+    onAddWeekly: (item, daysOfWeek, startDate) => {
+      // Start the recurrence on the tapped day so it doesn't backfill prior weeks.
+      persistSchedule(addRule(schedule, { id: uid(), libraryId: item.id, name: item.name, kind: 'weekly', daysOfWeek, startDate, createdAt: Date.now() }));
     },
   };
 

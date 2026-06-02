@@ -22,16 +22,17 @@ function prettyDate(dateKey) {
 export function DaySheet({ open, date, occurrences, doneKeys, library, onClose, handlers }) {
   const [mode, setMode] = useState('list'); // 'list' | 'pick' | 'repeat'
   const [picked, setPicked] = useState(null);
+  const [confirmRemoveId, setConfirmRemoveId] = useState(null);
 
   // reset to list each time the sheet opens on a new day
-  useEffect(() => { if (open) { setMode('list'); setPicked(null); } }, [open, date]);
+  useEffect(() => { if (open) { setMode('list'); setPicked(null); setConfirmRemoveId(null); } }, [open, date]);
 
   if (!open) return null;
   const itemById = (id) => library.find((i) => i.id === id) || null;
   const weekday = date ? dayOfWeek(date) : 0;
 
   const addOneOff = (item) => { handlers.onAddOneOff(date, item); setMode('list'); setPicked(null); };
-  const addWeekly = (item) => { handlers.onAddWeekly(item, [weekday]); setMode('list'); setPicked(null); };
+  const addWeekly = (item) => { handlers.onAddWeekly(item, [weekday], date); setMode('list'); setPicked(null); };
 
   return (
     <Sheet open={open} onClose={onClose} title={prettyDate(date)} primaryLabel="Done" onPrimary={onClose}>
@@ -71,14 +72,22 @@ export function DaySheet({ open, date, occurrences, doneKeys, library, onClose, 
                         </button>
                       </div>
                     )}
-                    <div className="mt-2 flex items-center gap-4 text-[13px]">
-                      {!done && !skipped && (
-                        <button type="button" onClick={() => handlers.onSkip(occ)} className="press text-[var(--color-secondary)]">Skip this day</button>
-                      )}
-                      <button type="button" onClick={() => handlers.onRemove(occ)} className="press text-red-400">
-                        {occ.source === 'rule' ? 'Remove series' : 'Remove'}
-                      </button>
-                    </div>
+                    {confirmRemoveId === occ.id ? (
+                      <div className="mt-2 flex items-center gap-3 text-[13px]">
+                        <span className="text-[var(--color-secondary)] flex-1">Remove the whole weekly series?</span>
+                        <button type="button" onClick={() => setConfirmRemoveId(null)} className="press text-[var(--color-accent)]">Cancel</button>
+                        <button type="button" onClick={() => { handlers.onRemove(occ); setConfirmRemoveId(null); }} className="press text-red-400 font-semibold">Remove</button>
+                      </div>
+                    ) : (
+                      <div className="mt-2 flex items-center gap-4 text-[13px]">
+                        {!done && !skipped && (
+                          <button type="button" onClick={() => handlers.onSkip(occ)} className="press text-[var(--color-secondary)]">Skip this day</button>
+                        )}
+                        <button type="button" onClick={() => (occ.source === 'rule' ? setConfirmRemoveId(occ.id) : handlers.onRemove(occ))} className="press text-red-400">
+                          {occ.source === 'rule' ? 'Remove series' : 'Remove'}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
