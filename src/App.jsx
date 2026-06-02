@@ -7,7 +7,8 @@ import { NavBar, Group, GroupHeader, GroupFooter, Row, CenterCard, ConfirmDelete
 import { TabBar } from './views/TabBar.jsx';
 import { HistoryView } from './views/HistoryView.jsx';
 import { LogEditorView } from './views/LogEditorView.jsx';
-import { loadLibrary, saveLibrary, loadJournal, saveJournal, loadExercises, saveExercises } from './storage.js';
+import { DataBackup } from './views/DataBackup.jsx';
+import { loadLibrary, saveLibrary, loadJournal, saveJournal, loadExercises, saveExercises, loadSchedule, buildBackup } from './storage.js';
 import { exercisesForItem, expandSetsFromSlots } from './exercises.js';
 import { ensureExercise } from './catalog.js';
 import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt } from './journal.js';
@@ -1217,7 +1218,7 @@ function RotationBuilderView({ rotation, setRotation, onBack, onStart, onSave })
 // =============================================================================
 // LIBRARY VIEW
 // =============================================================================
-function LibraryView({ items, onClose, onLoad, onLog, onRequestDelete }) {
+function LibraryView({ items, onClose, onLoad, onLog, onRequestDelete, footer }) {
   return (
     <div className="slideIn pb-8">
       <NavBar title="Saved" leftLabel="Done" onLeft={onClose} />
@@ -1289,6 +1290,7 @@ function LibraryView({ items, onClose, onLoad, onLog, onRequestDelete }) {
           <GroupFooter>Tap a session to load it. Clipboard logs a result; trash deletes.</GroupFooter>
         </>
       )}
+      {footer}
     </div>
   );
 }
@@ -1844,6 +1846,15 @@ export default function App() {
     setPendingJournalDelete(null);
   };
 
+  // --- backup ---------------------------------------------------------------
+  const getBackup = () => buildBackup({ library, exercises: catalog, journal, schedule: loadSchedule() });
+  const onImported = (parsed) => {
+    setLibrary(parsed.library);
+    setJournal(parsed.journal);
+    setCatalog(parsed.exercises);
+    setLoadedFromId(null);
+  };
+
   // --- tab bar --------------------------------------------------------------
   const showTabBar = view === 'wizard' || view === 'history' || view === 'library';
   const activeTab = view === 'history' ? 'history' : view === 'library' ? 'library' : 'train';
@@ -1864,7 +1875,14 @@ export default function App() {
           <Wizard onPickConfig={pickPreset} onPickCustom={pickCustom} onPickRotation={pickRotation} />
         )}
         {view === 'library' && (
-          <LibraryView items={library} onClose={closeLibrary} onLoad={loadFromLibrary} onLog={openLogForItem} onRequestDelete={requestDelete} />
+          <LibraryView
+            items={library}
+            onClose={closeLibrary}
+            onLoad={loadFromLibrary}
+            onLog={openLogForItem}
+            onRequestDelete={requestDelete}
+            footer={<DataBackup getBackup={getBackup} onImported={onImported} />}
+          />
         )}
         {view === 'history' && (
           <HistoryView journal={journal} onNew={openAdhocLog} onOpen={openEditLog} onRequestDelete={requestJournalDelete} />
