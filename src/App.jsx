@@ -718,6 +718,24 @@ function SaveDialog({ open, defaultName, onClose, onSave }) {
 // =============================================================================
 // CONFIGURE (preset)
 // =============================================================================
+function StartWithDraftDialog({ open, onClose, onReview, onDiscardStart }) {
+  return (
+    <CenterCard open={open} onClose={onClose}>
+      <div className="p-5 text-center">
+        <div className="text-[17px] font-semibold">Unsaved workout</div>
+        <div className="text-[13px] text-[var(--color-secondary)] mt-1">
+          You have a logged workout that isn’t saved yet. Review it first, or discard it and start fresh.
+        </div>
+      </div>
+      <div className="flex flex-col border-t border-white/10 divide-y divide-white/10">
+        <button type="button" onClick={onReview} className="press h-11 text-[15px] text-[var(--color-accent)] font-semibold">Review unsaved</button>
+        <button type="button" onClick={onDiscardStart} className="press h-11 text-[15px] text-red-400">Discard &amp; start</button>
+        <button type="button" onClick={onClose} className="press h-11 text-[15px] text-[var(--color-secondary)]">Cancel</button>
+      </div>
+    </CenterCard>
+  );
+}
+
 function LeaveTimerDialog({ open, onClose, onReview, onKeep, onDiscard }) {
   return (
     <CenterCard open={open} onClose={onClose}>
@@ -1731,6 +1749,8 @@ export default function App() {
   const [reviewOpen, setReviewOpen] = useState(false); // in-timer review sheet
   const [pendingTimerBack, setPendingTimerBack] = useState(false); // leave-timer prompt
   const [pendingDiscardDraft, setPendingDiscardDraft] = useState(false);
+  const [pendingStartTimer, setPendingStartTimer] = useState(false); // start-with-unsaved-draft prompt
+  const [discardLeavePending, setDiscardLeavePending] = useState(false); // discard should also leave the timer
 
   const persist = (next) => { setLibrary(next); saveLibrary(next); };
   const persistJournal = (next) => { setJournal(next); saveJournal(next); };
@@ -1888,7 +1908,7 @@ export default function App() {
     return null;
   };
 
-  const startTimer = () => {
+  const doStartTimer = () => {
     const s = buildCurrentSession();
     const name = (loadedFromId ? originalName : defaultName) || 'Workout';
     setPendingOrigin({
@@ -1898,6 +1918,12 @@ export default function App() {
       durationMin: s?.durationMin ?? null,
     });
     setView('timer');
+  };
+
+  // Guard: don't silently reuse a previous workout's unsaved draft for a new run.
+  const startTimer = () => {
+    if (activeLog && hasLoggedContent(activeLog)) { setPendingStartTimer(true); return; }
+    doStartTimer();
   };
 
   // --- journal entry points -------------------------------------------------
@@ -2042,6 +2068,8 @@ export default function App() {
     setPendingOrigin(null);
     setReviewOpen(false);
     setPendingDiscardDraft(false);
+    // If discard was chosen from the leave-timer prompt, complete the leave.
+    if (discardLeavePending) { setDiscardLeavePending(false); timerBack(); }
   };
 
   const cancelLog = () => { setLogDraft(null); setView(logReturnTo); };
@@ -2219,7 +2247,13 @@ export default function App() {
           onClose={() => setPendingTimerBack(false)}
           onReview={() => { setPendingTimerBack(false); setReviewOpen(true); }}
           onKeep={() => { setPendingTimerBack(false); timerBack(); }}
-          onDiscard={() => { setPendingTimerBack(false); setPendingDiscardDraft(true); }}
+          onDiscard={() => { setPendingTimerBack(false); setDiscardLeavePending(true); setPendingDiscardDraft(true); }}
+        />
+        <StartWithDraftDialog
+          open={pendingStartTimer}
+          onClose={() => setPendingStartTimer(false)}
+          onReview={() => { setPendingStartTimer(false); setReviewOpen(true); }}
+          onDiscardStart={() => { setPendingStartTimer(false); persistActiveLog(null); setPendingOrigin(null); doStartTimer(); }}
         />
         <ConfirmDeleteDialog
           open={pendingDiscardDraft}
