@@ -16,7 +16,7 @@ import { loadLibrary, saveLibrary, loadJournal, saveJournal, loadExercises, save
 import { exercisesForItem, expandSetsFromSlots } from './exercises.js';
 import { ensureExercise, findExercise, normalizeExerciseName } from './catalog.js';
 import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt, suggestionsForExercise, recentSessionsForExercise, lastExerciseLogged, emptySet, fieldsForMetric, pruneEntry, hasLoggedContent, isLoggedSet } from './journal.js';
-import { todayKey } from './date.js';
+import { todayKey, addDays } from './date.js';
 
 // Boxing bell samples (Vite resolves these to hashed URLs at build time)
 import goSampleUrl from './assets/sounds/go.mp3?url';
@@ -2133,9 +2133,11 @@ export default function App() {
       // Start the recurrence on the tapped day so it doesn't backfill prior weeks.
       persistSchedule(addRule(schedule, { id: uid(), libraryId: item.id, name: item.name, kind: 'weekly', daysOfWeek, startDate, createdAt: Date.now() }));
     },
-    onAddEveryN: (item, intervalDays, anchorDate) => {
-      // anchorDate doubles as the start (occurrences only fall on/after it).
-      persistSchedule(addRule(schedule, { id: uid(), libraryId: item.id, name: item.name, kind: 'everyN', intervalDays, anchorDate, startDate: anchorDate, createdAt: Date.now() }));
+    onAddEveryN: (item, intervalDays, anchorDate, repeats) => {
+      // anchorDate doubles as the start. `repeats` = total sessions (incl. the
+      // first); bound it via endDate = anchor + (repeats-1)*interval. Blank = open.
+      const endDate = repeats && repeats >= 1 ? addDays(anchorDate, (repeats - 1) * intervalDays) : null;
+      persistSchedule(addRule(schedule, { id: uid(), libraryId: item.id, name: item.name, kind: 'everyN', intervalDays, anchorDate, startDate: anchorDate, endDate, createdAt: Date.now() }));
     },
     onCopyToDate: (occ, date) => {
       persistSchedule(addOneOff(schedule, { id: uid(), date, libraryId: occ.libraryId, name: occ.name, status: 'planned', createdAt: Date.now() }));

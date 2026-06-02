@@ -9,7 +9,7 @@
 import { useState, useEffect } from 'react';
 import { Play, ClipboardList, Plus, ChevronLeft } from 'lucide-react';
 import { Sheet } from './ui.jsx';
-import { fromDateKey, dayOfWeek } from '../date.js';
+import { fromDateKey, dayOfWeek, addDays } from '../date.js';
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -23,9 +23,11 @@ export function DaySheet({ open, date, occurrences, doneKeys, library, onClose, 
   const [mode, setMode] = useState('list'); // 'list' | 'pick' | 'repeat'
   const [picked, setPicked] = useState(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState(null);
+  const [nDays, setNDays] = useState('');
+  const [nReps, setNReps] = useState('');
 
   // reset to list each time the sheet opens on a new day
-  useEffect(() => { if (open) { setMode('list'); setPicked(null); setConfirmRemoveId(null); } }, [open, date]);
+  useEffect(() => { if (open) { setMode('list'); setPicked(null); setConfirmRemoveId(null); setNDays(''); setNReps(''); } }, [open, date]);
 
   if (!open) return null;
   const itemById = (id) => library.find((i) => i.id === id) || null;
@@ -33,7 +35,19 @@ export function DaySheet({ open, date, occurrences, doneKeys, library, onClose, 
 
   const addOneOff = (item) => { handlers.onAddOneOff(date, item); setMode('list'); setPicked(null); };
   const addWeekly = (item) => { handlers.onAddWeekly(item, [weekday], date); setMode('list'); setPicked(null); };
-  const addEveryN = (item, n) => { handlers.onAddEveryN(item, n, date); setMode('list'); setPicked(null); };
+  const addEveryN = (item) => {
+    const n = parseInt(nDays, 10);
+    if (!(n >= 1)) return;
+    const y = parseInt(nReps, 10);
+    handlers.onAddEveryN(item, n, date, Number.isInteger(y) && y >= 1 ? y : null);
+    setMode('list'); setPicked(null);
+  };
+
+  const nInt = parseInt(nDays, 10);
+  const yInt = parseInt(nReps, 10);
+  const everyNHint = date && nInt >= 1
+    ? (yInt >= 1 ? `${yInt} session${yInt === 1 ? '' : 's'} · last on ${addDays(date, (yInt - 1) * nInt)}` : 'Repeats with no end date')
+    : '';
 
   return (
     <Sheet open={open} onClose={onClose} title={prettyDate(date)} primaryLabel="Done" onPrimary={onClose}>
@@ -146,14 +160,21 @@ export function DaySheet({ open, date, occurrences, doneKeys, library, onClose, 
               style={{ background: 'var(--color-accent)', color: '#000' }}>
               Every {WEEKDAYS[weekday]}
             </button>
-            <div className="pt-1">
-              <div className="text-[12px] text-[var(--color-secondary)] text-center mb-1.5">Or every N days</div>
-              <div className="flex gap-2 justify-center">
-                {[2, 3, 4, 7].map((n) => (
-                  <button key={n} type="button" onClick={() => addEveryN(picked, n)}
-                    className="press px-3 h-10 rounded-xl bg-[var(--color-cell)] text-[14px] font-medium">{n} days</button>
-                ))}
+            <div className="rounded-2xl bg-[var(--color-cell)] p-3">
+              <div className="text-[13px] text-[var(--color-secondary)] mb-2">Or repeat every N days</div>
+              <div className="flex items-center gap-2 text-[15px] text-white flex-wrap">
+                <span>Every</span>
+                <input type="text" inputMode="numeric" value={nDays} onChange={(e) => setNDays(e.target.value.replace(/[^0-9]/g, ''))} onFocus={(e) => e.target.select()} placeholder="3"
+                  className="w-12 bg-[var(--color-cell-pressed)] rounded-lg px-2 py-1.5 text-center tabular placeholder:text-[var(--color-tertiary)] focus:outline-none" />
+                <span>days, for</span>
+                <input type="text" inputMode="numeric" value={nReps} onChange={(e) => setNReps(e.target.value.replace(/[^0-9]/g, ''))} onFocus={(e) => e.target.select()} placeholder="∞"
+                  className="w-12 bg-[var(--color-cell-pressed)] rounded-lg px-2 py-1.5 text-center tabular placeholder:text-[var(--color-tertiary)] focus:outline-none" />
+                <span>sessions</span>
               </div>
+              {everyNHint && <div className="text-[12px] text-[var(--color-tertiary)] mt-2">{everyNHint}</div>}
+              <button type="button" disabled={!(nInt >= 1)} onClick={() => addEveryN(picked)}
+                className="press w-full mt-2.5 h-10 rounded-xl text-[14px] font-semibold disabled:opacity-30"
+                style={{ background: 'var(--color-accent)', color: '#000' }}>Add</button>
             </div>
           </div>
           <button type="button" onClick={() => setMode('pick')} className="press w-full mt-2 h-10 text-[14px] text-[var(--color-secondary)]">Back</button>
