@@ -12,9 +12,14 @@ Status legend: **shipped** · **next** · **planned** · **backlog**
 1. ✅ Step 1 — foundation utilities (`date/catalog/exercises/storage`)
 2. ✅ Step 2 — journal model + UI (log / history / tabs)
 3. ✅ Step 3 — JSON backup / export-import
-4. **next** **In-Timer Logging & Exercise History** — *promoted ahead of scheduling*
+4. ✅ **In-Timer Logging & Exercise History** — inline on-timer logger (not a
+   sheet/pause), crash-safe active draft, history hint, completion review sheet,
+   resume banner, leave-timer prompt. Backfill via the full editor.
 5. **planned** Scheduling / calendar
 6. **planned** Polish cluster (trends, stats, PRs, library "last done", draft safety)
+
+> In-timer note: the per-set surface is the inline logger; the **review sheet**
+> survives only at completion/resume (the sheet-per-set idea was the wrong call).
 
 > Rationale: for the primary use case (reusing timers and tracking results),
 > in-timer history/logging is more central than calendar scheduling. Backup comes
