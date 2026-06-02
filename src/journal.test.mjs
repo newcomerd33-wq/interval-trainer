@@ -23,6 +23,7 @@ import {
   pruneEntry,
   suggestionsForExercise,
   recentSessionsForExercise,
+  hasLoggedContent,
 } from './journal.js';
 
 // deterministic id generator
@@ -240,6 +241,15 @@ test('pruneEntry drops unlogged sets and note-only exercises', () => {
   assert.equal(pruned.exercises.length, 2); // "Note only" dropped
   assert.equal(pruned.exercises[0].sets.length, 1); // unlogged Squat set dropped
   assert.equal(pruned.exercises[1].nameSnapshot, 'Bench');
+});
+
+test('hasLoggedContent: true for a logged set or any session-level note/metric', () => {
+  assert.equal(hasLoggedContent(null), false);
+  assert.equal(hasLoggedContent({ exercises: [{ sets: [{ weight: null, done: false }] }] }), false);
+  assert.equal(hasLoggedContent({ exercises: [{ sets: [{ weight: 100 }] }] }), true);
+  assert.equal(hasLoggedContent({ notes: 'felt good', exercises: [] }), true);
+  assert.equal(hasLoggedContent({ sessionRPE: 8, exercises: [] }), true);
+  assert.equal(hasLoggedContent({ notes: '   ', exercises: [] }), false);
 });
 
 test('suggestionsForExercise returns most-recent prior session sets', () => {

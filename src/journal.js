@@ -223,6 +223,14 @@ export function pruneEntry(entry) {
   return { ...entry, exercises };
 }
 
+// True if an entry holds anything worth saving/recovering: a logged set, or a
+// session-level note/RPE/bodyweight. Gates the resume banner + finalize buttons.
+export function hasLoggedContent(entry) {
+  if (!entry) return false;
+  if ((entry.notes && entry.notes.trim()) || entry.sessionRPE != null || entry.bodyweight != null) return true;
+  return (entry.exercises || []).some((ex) => (ex.sets || []).some(isLoggedSet));
+}
+
 // --- history / suggestions (structured; view formats) ------------------------
 
 // The most recent prior session's sets for an exercise — positional placeholders

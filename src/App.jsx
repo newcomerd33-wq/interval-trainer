@@ -8,10 +8,11 @@ import { TabBar } from './views/TabBar.jsx';
 import { HistoryView } from './views/HistoryView.jsx';
 import { LogEditorView } from './views/LogEditorView.jsx';
 import { DataBackup } from './views/DataBackup.jsx';
-import { loadLibrary, saveLibrary, loadJournal, saveJournal, loadExercises, saveExercises, loadSchedule, buildBackup } from './storage.js';
+import { InTimerLog } from './views/InTimerLog.jsx';
+import { loadLibrary, saveLibrary, loadJournal, saveJournal, loadExercises, saveExercises, loadSchedule, buildBackup, loadActiveLog, saveActiveLog, clearActiveLog } from './storage.js';
 import { exercisesForItem, expandSetsFromSlots } from './exercises.js';
-import { ensureExercise } from './catalog.js';
-import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt, suggestionsForExercise, pruneEntry } from './journal.js';
+import { ensureExercise, findExercise, normalizeExerciseName } from './catalog.js';
+import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt, suggestionsForExercise, recentSessionsForExercise, pruneEntry, isLoggedSet } from './journal.js';
 import { todayKey } from './date.js';
 
 // Boxing bell samples (Vite resolves these to hashed URLs at build time)
@@ -1312,7 +1313,7 @@ function ProgressRing({ progress, color, size = 260, stroke = 6 }) {
   );
 }
 
-function TimerView({ session, onBack, onLog }) {
+function TimerView({ session, onBack, onLogResult, activeLog, exerciseHistory = {}, onStartDraft, onUpdateDraft, onReviewSave }) {
   const slots = session.slots;
   const totalSlots = slots.length;
 
@@ -1321,6 +1322,9 @@ function TimerView({ session, onBack, onLog }) {
   const [running, setRunning] = useState(false);
   const [preCount, setPreCount] = useState(null);
   const [audioOn, setAudioOn] = useState(true);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheetTarget, setSheetTarget] = useState({ exIdx: 0, setIdx: 0 });
+  const [wasRunning, setWasRunning] = useState(false);
   const prevIdxRef = useRef(0);
   const midRef = useRef(false);
 
@@ -1414,6 +1418,32 @@ function TimerView({ session, onBack, onLog }) {
     else setSecondsLeft(slots[j].duration);
   };
 
+  // Open the in-timer log sheet: pause the clock and snapshot the current slot's
+  // exercise/set so the sheet doesn't retarget as time would advance.
+  const openSheet = () => {
+    const slot = slots[currentIdx];
+    if (!slot || slot.isRest) return;
+    const draft = activeLog || (onStartDraft && onStartDraft());
+    if (!draft) return;
+    const key = normalizeExerciseName(slot.name);
+    const exIdx = draft.exercises.findIndex((e) => normalizeExerciseName(e.nameSnapshot) === key);
+    let setIdx = 0;
+    if (exIdx >= 0) {
+      const sets = draft.exercises[exIdx].sets;
+      const firstUnlogged = sets.findIndex((s) => !isLoggedSet(s));
+      setIdx = firstUnlogged >= 0 ? firstUnlogged : Math.max(0, sets.length - 1);
+    }
+    setSheetTarget({ exIdx: exIdx < 0 ? 0 : exIdx, setIdx });
+    setWasRunning(running);
+    setRunning(false);
+    setSheetOpen(true);
+  };
+  const closeSheet = () => {
+    setSheetOpen(false);
+    if (wasRunning && !isComplete) setRunning(true); // resume only if still mid-run
+    setWasRunning(false);
+  };
+
   const showPre = preCount !== null;
   const hasStarted = currentIdx > 0 || running;
   const slotDur = currentSlot?.duration ?? 60;
@@ -1480,6 +1510,16 @@ function TimerView({ session, onBack, onLog }) {
 
           <div className="text-center mt-7 px-4">
             <div className="text-[22px] font-semibold tracking-tight">{currentSlot.name}</div>
+            {(() => {
+              const h = exerciseHistory[normalizeExerciseName(currentSlot.name)];
+              const last = h?.recent?.[0];
+              if (!last) return null;
+              return (
+                <div className="mt-1 text-[12px] text-[var(--color-tertiary)] tabular truncate">
+                  Last: {last.sets.map((s) => (s.weight != null ? `${s.weight}×${s.reps ?? '–'}` : s.reps != null ? `${s.reps}` : s.timeSec != null ? `${s.timeSec}s` : '–')).join(' · ')}
+                </div>
+              );
+            })()}
             <div className="mt-1 text-[14px] text-[var(--color-secondary)]">
               {currentSlot.isRest && 'Recover'}
               {currentSlot.side === 'L' && 'Left side'}
@@ -1528,8 +1568,8 @@ function TimerView({ session, onBack, onLog }) {
             Pause
           </button>
         )}
-        {isComplete && onLog && (
-          <button type="button" onClick={onLog}
+        {isComplete && onLogResult && (
+          <button type="button" onClick={onLogResult}
             className="press w-full h-14 rounded-2xl text-[17px] font-semibold inline-flex items-center justify-center gap-2"
             style={{ background: ringColor, color: '#000' }}>
             <ClipboardList size={18} strokeWidth={2.5} />
@@ -1538,10 +1578,17 @@ function TimerView({ session, onBack, onLog }) {
         )}
         {isComplete && (
           <button type="button" onClick={start}
-            className={`press w-full h-14 rounded-2xl text-[17px] font-semibold inline-flex items-center justify-center gap-2 ${onLog ? 'bg-[var(--color-cell)]' : ''}`}
-            style={onLog ? undefined : { background: ringColor, color: '#000' }}>
+            className={`press w-full h-14 rounded-2xl text-[17px] font-semibold inline-flex items-center justify-center gap-2 ${onLogResult ? 'bg-[var(--color-cell)]' : ''}`}
+            style={onLogResult ? undefined : { background: ringColor, color: '#000' }}>
             <Play size={18} strokeWidth={2.5} fill="currentColor" />
             Run again
+          </button>
+        )}
+        {hasStarted && !isComplete && currentSlot && !currentSlot.isRest && onStartDraft && (
+          <button type="button" onClick={openSheet}
+            className="press w-full h-12 rounded-2xl bg-[var(--color-cell)] text-[15px] font-medium inline-flex items-center justify-center gap-2">
+            <ClipboardList size={15} strokeWidth={2.5} />
+            Log set
           </button>
         )}
         {hasStarted && !isComplete && (
@@ -1572,6 +1619,18 @@ function TimerView({ session, onBack, onLog }) {
           <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${audioOn ? 'translate-x-6' : 'translate-x-1'}`} />
         </button>
       </div>
+
+      {sheetOpen && (
+        <InTimerLog
+          open={sheetOpen}
+          onClose={closeSheet}
+          draft={activeLog}
+          target={sheetTarget}
+          exerciseHistory={exerciseHistory}
+          onChange={onUpdateDraft}
+          onReviewSave={() => { closeSheet(); onReviewSave && onReviewSave(); }}
+        />
+      )}
     </div>
   );
 }
@@ -1599,10 +1658,12 @@ export default function App() {
   const [logMode, setLogMode] = useState('create');
   const [logReturnTo, setLogReturnTo] = useState('history');
   const [pendingJournalDelete, setPendingJournalDelete] = useState(null);
+  const [activeLog, setActiveLog] = useState(() => loadActiveLog()); // in-progress workout draft
 
   const persist = (next) => { setLibrary(next); saveLibrary(next); };
   const persistJournal = (next) => { setJournal(next); saveJournal(next); };
   const persistCatalog = (next) => { setCatalog(next); saveExercises(next); };
+  const persistActiveLog = (next) => { setActiveLog(next); if (next) saveActiveLog(next); else clearActiveLog(); };
 
   const pickPreset = (config) => {
     setMode('preset');
@@ -1820,6 +1881,34 @@ export default function App() {
     setView('logEditor');
   };
 
+  // Active in-progress draft (in-timer logging). Created lazily on first log.
+  const startActiveDraft = () => {
+    if (activeLog) return activeLog;
+    const s = buildCurrentSession();
+    const derived = s ? expandSetsFromSlots(s.slots) : [];
+    const seed = seedExercisesForLog({ derived, catalog, journal, beforeDate: todayKey() });
+    const po = pendingOrigin || {};
+    const draft = createEntry({
+      sessionName: po.sessionName || 'Workout',
+      sourceType: po.sourceType || 'adhoc',
+      durationMin: po.durationMin ?? s?.durationMin ?? null,
+      origin: { ...(po.origin || {}), viaTimer: true },
+      exercises: seed.exercises,
+    });
+    persistActiveLog(draft);
+    return draft;
+  };
+
+  // Finalize the active draft through the editor (review & save).
+  const openReviewFromDraft = () => {
+    if (!activeLog) return;
+    setLogDraft(activeLog);
+    setLogSuggestions(buildSuggestions(activeLog.exercises, { beforeDate: activeLog.date }));
+    setLogMode('create');
+    setLogReturnTo('timer');
+    setView('logEditor');
+  };
+
   const openAdhocLog = () => {
     setLogDraft(createEntry({ sourceType: 'adhoc', origin: {}, exercises: [] }));
     setLogSuggestions({});
@@ -1853,6 +1942,8 @@ export default function App() {
     });
     if (cat !== catalog) persistCatalog(cat);
     persistJournal(upsertEntry(journal, withUpdatedAt({ ...pruned, exercises }, Date.now())));
+    // If this was the in-progress workout draft, clear it (and its provenance).
+    if (activeLog && activeLog.id === entry.id) { persistActiveLog(null); setPendingOrigin(null); }
     setLogDraft(null);
     setView('history');
   };
@@ -1873,6 +1964,7 @@ export default function App() {
     setJournal(parsed.journal);
     setCatalog(parsed.exercises);
     setLoadedFromId(null);
+    setActiveLog(null); // importAll() cleared localStorage; clear in-memory state too
   };
 
   // --- tab bar --------------------------------------------------------------
@@ -1887,6 +1979,28 @@ export default function App() {
   const session = useMemo(() => (view === 'timer' ? buildCurrentSession() : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [view, mode, presetConfig, presetBlocks, customSession, rotation]);
+
+  // Per-exercise history for the active timer session, keyed by normalized name
+  // (1:1 with exerciseId here — the scaffold dedupes by normalized name; the
+  // value carries exerciseId to disambiguate). Read-only: uses findExercise, so
+  // it never creates catalog entries just to show a hint.
+  const exerciseHistory = useMemo(() => {
+    if (view !== 'timer' || !session) return {};
+    const map = {};
+    for (const d of expandSetsFromSlots(session.slots)) {
+      const key = normalizeExerciseName(d.name);
+      if (map[key]) continue;
+      const ex = findExercise(catalog, d.name);
+      if (!ex) continue;
+      map[key] = {
+        exerciseId: ex.id,
+        recent: recentSessionsForExercise(journal, ex.id, 3),
+        suggestions: suggestionsForExercise(journal, ex.id, { beforeDate: todayKey() }),
+      };
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, session, catalog, journal]);
 
   return (
     <div style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
@@ -1942,7 +2056,12 @@ export default function App() {
           <TimerView
             session={session}
             onBack={() => setView(mode === 'custom' ? 'customBuilder' : mode === 'rotation' ? 'rotationBuilder' : 'configure')}
-            onLog={openLogFromTimer}
+            onLogResult={openLogFromTimer}
+            activeLog={activeLog}
+            exerciseHistory={exerciseHistory}
+            onStartDraft={startActiveDraft}
+            onUpdateDraft={persistActiveLog}
+            onReviewSave={openReviewFromDraft}
           />
         )}
         <SaveDialog open={saveOpen} defaultName={defaultName} onClose={() => setSaveOpen(false)} onSave={saveCurrent} />
