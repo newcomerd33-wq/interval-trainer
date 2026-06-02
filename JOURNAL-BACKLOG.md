@@ -15,7 +15,8 @@ Status legend: **shipped** · **next** · **planned** · **backlog**
 4. ✅ **In-Timer Logging & Exercise History** — inline on-timer logger (not a
    sheet/pause), crash-safe active draft, history hint, completion review sheet,
    resume banner, leave-timer prompt. Backfill via the full editor.
-5. **planned** Scheduling / calendar
+5. ✅ Scheduling / calendar — month grid, day sheet, one-off + weekly + every-N
+   recurrence, copy/move, Today strip, schedule→journal done linkage, backup.
 6. **planned** Polish cluster (trends, stats, PRs, library "last done", draft safety)
 
 > In-timer note: the per-set surface is the inline logger; the **review sheet**
