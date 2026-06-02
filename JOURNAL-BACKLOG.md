@@ -11,7 +11,7 @@ Status legend: **shipped** · **next** · **planned** · **backlog**
 
 1. ✅ Step 1 — foundation utilities (`date/catalog/exercises/storage`)
 2. ✅ Step 2 — journal model + UI (log / history / tabs)
-3. **next** Step 3 — JSON backup / export-import
+3. ✅ Step 3 — JSON backup / export-import
 4. **next** **In-Timer Logging & Exercise History** — *promoted ahead of scheduling*
 5. **planned** Scheduling / calendar
 6. **planned** Polish cluster (trends, stats, PRs, library "last done", draft safety)
@@ -132,3 +132,10 @@ stomp typed values. Deferred — revisit with the editor polish.
 `origin.scheduleRuleId` / `origin.occurrenceDate` already exist on journal entries
 but are unused until scheduling ships. When it lands, History should reflect
 "planned → done." Build journal/history changes aware that this is coming.
+
+**Backup follow-ups when scheduling ships** (Step 3 left these as TODOs because
+schedule has no React state yet):
+- `getBackup()` currently reads schedule via `loadSchedule()` (localStorage).
+  Once calendar state exists, export the **in-memory schedule state** instead.
+- `onImported()` currently refreshes library/journal/catalog only. It must also
+  **refresh schedule state** after a restore once that state exists.
