@@ -127,19 +127,21 @@ export function CenterCard({ open, onClose, children, maxWidth = 340 }) {
   );
 }
 
-export function ConfirmDeleteDialog({ open, itemName, onClose, onConfirm }) {
+export function ConfirmDeleteDialog({ open, itemName, onClose, onConfirm, title, body, confirmLabel = 'Delete' }) {
   return (
     <CenterCard open={open} onClose={onClose}>
       <div className="p-5 text-center">
-        <div className="text-[17px] font-semibold">Delete saved session?</div>
+        <div className="text-[17px] font-semibold">{title || 'Delete saved session?'}</div>
         <div className="text-[13px] text-[var(--color-secondary)] mt-1">
-          <span className="text-white">{itemName}</span> will be removed from your library. This can’t be undone.
+          {body || (
+            <><span className="text-white">{itemName}</span> will be removed from your library. This can’t be undone.</>
+          )}
         </div>
       </div>
       <div className="flex border-t border-white/10">
         <button type="button" onClick={onClose} className="press flex-1 h-11 text-[15px] text-[var(--color-accent)]">Cancel</button>
         <div className="w-px bg-white/10" />
-        <button type="button" onClick={onConfirm} className="press flex-1 h-11 text-[15px] text-red-400 font-semibold">Delete</button>
+        <button type="button" onClick={onConfirm} className="press flex-1 h-11 text-[15px] text-red-400 font-semibold">{confirmLabel}</button>
       </div>
     </CenterCard>
   );

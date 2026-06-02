@@ -1,9 +1,17 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   ChevronRight, ChevronLeft, Check, Play, Pause, RotateCcw, SkipForward,
-  Volume2, VolumeX, Plus, Minus, X, Sliders, Bookmark, Trash2, Repeat,
+  Volume2, VolumeX, Plus, Minus, X, Sliders, Bookmark, Trash2, Repeat, ClipboardList,
 } from 'lucide-react';
 import { NavBar, Group, GroupHeader, GroupFooter, Row, CenterCard, ConfirmDeleteDialog } from './views/ui.jsx';
+import { TabBar } from './views/TabBar.jsx';
+import { HistoryView } from './views/HistoryView.jsx';
+import { LogEditorView } from './views/LogEditorView.jsx';
+import { loadLibrary, saveLibrary, loadJournal, saveJournal, loadExercises, saveExercises } from './storage.js';
+import { exercisesForItem, expandSetsFromSlots } from './exercises.js';
+import { ensureExercise } from './catalog.js';
+import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt } from './journal.js';
+import { todayKey } from './date.js';
 
 // Boxing bell samples (Vite resolves these to hashed URLs at build time)
 import goSampleUrl from './assets/sounds/go.mp3?url';
@@ -235,20 +243,8 @@ function buildRotationSession(rot) {
   };
 }
 
-// =============================================================================
-// LIBRARY STORAGE (localStorage)
-// =============================================================================
-const LIB_KEY = 'interval-trainer-library-v1';
-
-function loadLibrary() {
-  try {
-    const raw = localStorage.getItem(LIB_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-function persistLibrary(items) {
-  try { localStorage.setItem(LIB_KEY, JSON.stringify(items)); } catch {}
-}
+// Library/journal/catalog persistence lives in ./storage.js (single source of
+// truth for localStorage keys + the unified backup shape).
 
 // =============================================================================
 // AUDIO
@@ -499,7 +495,7 @@ function Stepper({ value, min = 5, max = 600, step = 5, onChange }) {
 // =============================================================================
 const WIZARD_STEPS = ['duration', 'style', 'interval', 'composition', 'results'];
 
-function Wizard({ onPickConfig, onPickCustom, onPickRotation, onOpenLibrary, libraryCount }) {
+function Wizard({ onPickConfig, onPickCustom, onPickRotation }) {
   const [step, setStep] = useState(0);
   const [choices, setChoices] = useState({ duration: null, style: null, intervalSec: null, composition: null });
   const set = (key, value) => { setChoices(c => ({ ...c, [key]: value })); setStep(s => Math.min(s + 1, WIZARD_STEPS.length - 1)); };
@@ -546,8 +542,8 @@ function Wizard({ onPickConfig, onPickCustom, onPickRotation, onOpenLibrary, lib
         title="New session"
         leftLabel={step === 0 ? null : 'Back'}
         onLeft={step === 0 ? null : back}
-        rightLabel={step === 0 ? (libraryCount > 0 ? `Saved · ${libraryCount}` : 'Saved') : 'Restart'}
-        onRight={step === 0 ? onOpenLibrary : restart}
+        rightLabel={step === 0 ? null : 'Restart'}
+        onRight={step === 0 ? null : restart}
       />
 
       <div className="px-4 mt-1 mb-2 flex items-center gap-1.5">
@@ -1221,7 +1217,7 @@ function RotationBuilderView({ rotation, setRotation, onBack, onStart, onSave })
 // =============================================================================
 // LIBRARY VIEW
 // =============================================================================
-function LibraryView({ items, onClose, onLoad, onRequestDelete }) {
+function LibraryView({ items, onClose, onLoad, onLog, onRequestDelete }) {
   return (
     <div className="slideIn pb-8">
       <NavBar title="Saved" leftLabel="Done" onLeft={onClose} />
@@ -1272,6 +1268,14 @@ function LibraryView({ items, onClose, onLoad, onRequestDelete }) {
                   </button>
                   <button
                     type="button"
+                    onClick={() => onLog(item)}
+                    aria-label={`Log ${item.name}`}
+                    className="press w-10 h-10 rounded-full text-[var(--color-accent)] active:bg-[var(--color-cell-pressed)] flex items-center justify-center shrink-0 ml-1"
+                  >
+                    <ClipboardList size={17} strokeWidth={2.2} />
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => onRequestDelete(item)}
                     aria-label={`Delete ${item.name}`}
                     className="press w-10 h-10 rounded-full text-red-400 active:bg-red-500/10 flex items-center justify-center shrink-0 ml-1"
@@ -1282,7 +1286,7 @@ function LibraryView({ items, onClose, onLoad, onRequestDelete }) {
               );
             })}
           </Group>
-          <GroupFooter>Tap a saved session to load it. Trash icon deletes.</GroupFooter>
+          <GroupFooter>Tap a session to load it. Clipboard logs a result; trash deletes.</GroupFooter>
         </>
       )}
     </div>
@@ -1306,7 +1310,7 @@ function ProgressRing({ progress, color, size = 260, stroke = 6 }) {
   );
 }
 
-function TimerView({ session, onBack }) {
+function TimerView({ session, onBack, onLog }) {
   const slots = session.slots;
   const totalSlots = slots.length;
 
@@ -1522,10 +1526,18 @@ function TimerView({ session, onBack }) {
             Pause
           </button>
         )}
-        {isComplete && (
-          <button type="button" onClick={start}
+        {isComplete && onLog && (
+          <button type="button" onClick={onLog}
             className="press w-full h-14 rounded-2xl text-[17px] font-semibold inline-flex items-center justify-center gap-2"
             style={{ background: ringColor, color: '#000' }}>
+            <ClipboardList size={18} strokeWidth={2.5} />
+            Log result
+          </button>
+        )}
+        {isComplete && (
+          <button type="button" onClick={start}
+            className={`press w-full h-14 rounded-2xl text-[17px] font-semibold inline-flex items-center justify-center gap-2 ${onLog ? 'bg-[var(--color-cell)]' : ''}`}
+            style={onLog ? undefined : { background: ringColor, color: '#000' }}>
             <Play size={18} strokeWidth={2.5} fill="currentColor" />
             Run again
           </button>
@@ -1577,8 +1589,17 @@ export default function App() {
   const [savePromptOpen, setSavePromptOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [rotation, setRotation] = useState(null);
+  const [journal, setJournal] = useState(() => loadJournal());
+  const [catalog, setCatalog] = useState(() => loadExercises());
+  const [pendingOrigin, setPendingOrigin] = useState(null); // timer launch context
+  const [logDraft, setLogDraft] = useState(null);
+  const [logMode, setLogMode] = useState('create');
+  const [logReturnTo, setLogReturnTo] = useState('history');
+  const [pendingJournalDelete, setPendingJournalDelete] = useState(null);
 
-  const persist = (next) => { setLibrary(next); persistLibrary(next); };
+  const persist = (next) => { setLibrary(next); saveLibrary(next); };
+  const persistJournal = (next) => { setJournal(next); saveJournal(next); };
+  const persistCatalog = (next) => { setCatalog(next); saveExercises(next); };
 
   const pickPreset = (config) => {
     setMode('preset');
@@ -1609,7 +1630,7 @@ export default function App() {
   };
   const openLibrary = () => setView('library');
   const closeLibrary = () => setView('wizard');
-  const goBackToWizard = () => { setLoadedFromId(null); setView('wizard'); };
+  const goBackToWizard = () => { setLoadedFromId(null); setPendingOrigin(null); setView('wizard'); };
 
   const loadFromLibrary = (item) => {
     if (item.sourceType === 'preset') {
@@ -1721,23 +1742,129 @@ export default function App() {
     ? `${rotation.primary.name} + ${rotation.accessories.length} accessories`
     : '';
 
-  const session = useMemo(() => {
-    if (view === 'timer') {
-      if (mode === 'preset' && presetConfig && presetBlocks?.length) return buildPresetSession(presetConfig, presetBlocks);
-      if (mode === 'custom' && customSession) return buildCustomSession(customSession);
-      if (mode === 'rotation' && rotation) return buildRotationSession(rotation);
-    }
+  // Build the session from the CURRENT builder state, ungated by view, so timer
+  // launch can read durationMin for pendingOrigin. The memo below stays gated to
+  // avoid keeping a stale session around after returning to the wizard.
+  const buildCurrentSession = () => {
+    if (mode === 'preset' && presetConfig && presetBlocks?.length) return buildPresetSession(presetConfig, presetBlocks);
+    if (mode === 'custom' && customSession) return buildCustomSession(customSession);
+    if (mode === 'rotation' && rotation) return buildRotationSession(rotation);
     return null;
-  }, [view, mode, presetConfig, presetBlocks, customSession, rotation]);
+  };
+
+  const startTimer = () => {
+    const s = buildCurrentSession();
+    const name = (loadedFromId ? originalName : defaultName) || 'Workout';
+    setPendingOrigin({
+      origin: { libraryId: loadedFromId ?? null, scheduleRuleId: null, scheduleOneOffId: null, occurrenceDate: null, viaTimer: false },
+      sessionName: name,
+      sourceType: mode,
+      durationMin: s?.durationMin ?? null,
+    });
+    setView('timer');
+  };
+
+  // --- journal entry points -------------------------------------------------
+  const openLogForItem = (item) => {
+    const derived = exercisesForItem(item);
+    const seed = seedExercisesForLog({ derived, catalog, journal, beforeDate: todayKey() });
+    persistCatalog(seed.catalog);
+    setLogDraft(createEntry({
+      sessionName: item.name,
+      sourceType: item.sourceType,
+      origin: { libraryId: item.id },
+      exercises: seed.exercises,
+    }));
+    setLogMode('create');
+    setLogReturnTo('library');
+    setView('logEditor');
+  };
+
+  const openLogFromTimer = () => {
+    const s = buildCurrentSession();
+    const derived = s ? expandSetsFromSlots(s.slots) : [];
+    const seed = seedExercisesForLog({ derived, catalog, journal, beforeDate: todayKey() });
+    persistCatalog(seed.catalog);
+    const po = pendingOrigin || {};
+    setLogDraft(createEntry({
+      sessionName: po.sessionName || 'Workout',
+      sourceType: po.sourceType || 'adhoc',
+      durationMin: po.durationMin ?? s?.durationMin ?? null,
+      origin: { ...(po.origin || {}), viaTimer: true },
+      exercises: seed.exercises,
+    }));
+    setLogMode('create');
+    setLogReturnTo('timer');
+    setView('logEditor');
+  };
+
+  const openAdhocLog = () => {
+    setLogDraft(createEntry({ sourceType: 'adhoc', origin: {}, exercises: [] }));
+    setLogMode('create');
+    setLogReturnTo('history');
+    setView('logEditor');
+  };
+
+  const openEditLog = (entry) => {
+    setLogDraft(entry);
+    setLogMode('edit');
+    setLogReturnTo('history');
+    setView('logEditor');
+  };
+
+  const saveLog = (entry) => {
+    // Resolve catalog ids for all nonblank exercise names; drop blank ones.
+    let cat = catalog;
+    const exercises = (entry.exercises || [])
+      .filter((ex) => (ex.nameSnapshot || '').trim())
+      .map((ex) => {
+        const name = ex.nameSnapshot.trim();
+        const r = ensureExercise(cat, name);
+        cat = r.catalog;
+        return { ...ex, nameSnapshot: name, exerciseId: r.exercise.id };
+      });
+    if (cat !== catalog) persistCatalog(cat);
+    persistJournal(upsertEntry(journal, withUpdatedAt({ ...entry, exercises }, Date.now())));
+    setLogDraft(null);
+    setView('history');
+  };
+
+  const cancelLog = () => { setLogDraft(null); setView(logReturnTo); };
+
+  const requestJournalDelete = (entry) => setPendingJournalDelete(entry);
+  const confirmJournalDelete = () => {
+    if (!pendingJournalDelete) return;
+    persistJournal(removeEntry(journal, pendingJournalDelete.id));
+    setPendingJournalDelete(null);
+  };
+
+  // --- tab bar --------------------------------------------------------------
+  const showTabBar = view === 'wizard' || view === 'history' || view === 'library';
+  const activeTab = view === 'history' ? 'history' : view === 'library' ? 'library' : 'train';
+  const selectTab = (id) => {
+    if (id === 'train') goBackToWizard();
+    else if (id === 'history') setView('history');
+    else setView('library');
+  };
+
+  const session = useMemo(() => (view === 'timer' ? buildCurrentSession() : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [view, mode, presetConfig, presetBlocks, customSession, rotation]);
 
   return (
     <div style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-      <div className="max-w-[440px] mx-auto">
+      <div className={`max-w-[440px] mx-auto ${showTabBar ? 'pb-24' : ''}`}>
         {view === 'wizard' && (
-          <Wizard onPickConfig={pickPreset} onPickCustom={pickCustom} onPickRotation={pickRotation} onOpenLibrary={openLibrary} libraryCount={library.length} />
+          <Wizard onPickConfig={pickPreset} onPickCustom={pickCustom} onPickRotation={pickRotation} />
         )}
         {view === 'library' && (
-          <LibraryView items={library} onClose={closeLibrary} onLoad={loadFromLibrary} onRequestDelete={requestDelete} />
+          <LibraryView items={library} onClose={closeLibrary} onLoad={loadFromLibrary} onLog={openLogForItem} onRequestDelete={requestDelete} />
+        )}
+        {view === 'history' && (
+          <HistoryView journal={journal} onNew={openAdhocLog} onOpen={openEditLog} onRequestDelete={requestJournalDelete} />
+        )}
+        {view === 'logEditor' && logDraft && (
+          <LogEditorView draft={logDraft} mode={logMode} onSave={saveLog} onCancel={cancelLog} />
         )}
         {view === 'configure' && presetConfig && (
           <ConfigureView
@@ -1745,7 +1872,7 @@ export default function App() {
             blocks={presetBlocks}
             setBlocks={setPresetBlocks}
             onBack={goBackToWizard}
-            onStart={() => setView('timer')}
+            onStart={startTimer}
             onSave={triggerSave}
           />
         )}
@@ -1754,7 +1881,7 @@ export default function App() {
             session={customSession}
             setSession={setCustomSession}
             onBack={goBackToWizard}
-            onStart={() => setView('timer')}
+            onStart={startTimer}
             onSave={triggerSave}
           />
         )}
@@ -1763,7 +1890,7 @@ export default function App() {
             rotation={rotation}
             setRotation={setRotation}
             onBack={goBackToWizard}
-            onStart={() => setView('timer')}
+            onStart={startTimer}
             onSave={triggerSave}
           />
         )}
@@ -1771,6 +1898,7 @@ export default function App() {
           <TimerView
             session={session}
             onBack={() => setView(mode === 'custom' ? 'customBuilder' : mode === 'rotation' ? 'rotationBuilder' : 'configure')}
+            onLog={openLogFromTimer}
           />
         )}
         <SaveDialog open={saveOpen} defaultName={defaultName} onClose={() => setSaveOpen(false)} onSave={saveCurrent} />
@@ -1787,7 +1915,15 @@ export default function App() {
           onClose={() => setPendingDelete(null)}
           onConfirm={confirmDelete}
         />
+        <ConfirmDeleteDialog
+          open={!!pendingJournalDelete}
+          title="Delete this entry?"
+          body={<><span className="text-white">{pendingJournalDelete?.sessionName || 'This workout'}</span> will be removed from your history. This can’t be undone.</>}
+          onClose={() => setPendingJournalDelete(null)}
+          onConfirm={confirmJournalDelete}
+        />
       </div>
+      {showTabBar && <TabBar active={activeTab} onSelect={selectTab} />}
     </div>
   );
 }
