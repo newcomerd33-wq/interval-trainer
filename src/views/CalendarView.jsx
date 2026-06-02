@@ -26,6 +26,25 @@ export function CalendarView({ schedule, journal, library, handlers }) {
   const today = todayKey();
   const [monthKey, setMonthKey] = useState(startOfMonth(today));
   const [selectedDate, setSelectedDate] = useState(null);
+  const [pending, setPending] = useState(null); // { action:'copy'|'move', occ } — tap a day to complete
+
+  // Tapping a day either pastes/moves a pending occurrence, or opens the day sheet.
+  const onDayTap = (dateKey) => {
+    if (pending) {
+      if (pending.action === 'copy') handlers.onCopyToDate(pending.occ, dateKey);
+      else handlers.onMoveToDate(pending.occ, dateKey);
+      setPending(null);
+    } else {
+      setSelectedDate(dateKey);
+    }
+  };
+
+  // Day-sheet handlers + copy/move (which arm the tap-a-day mode and close the sheet).
+  const daySheetHandlers = {
+    ...handlers,
+    onCopy: (occ) => { setSelectedDate(null); setPending({ action: 'copy', occ }); },
+    onMove: (occ) => { setSelectedDate(null); setPending({ action: 'move', occ }); },
+  };
 
   const monthStart = startOfMonth(monthKey);
   const gridStart = startOfWeek(monthStart, 0); // Sunday
@@ -64,6 +83,13 @@ export function CalendarView({ schedule, journal, library, handlers }) {
         </button>
       </div>
 
+      {pending && (
+        <div className="mx-4 mb-2 rounded-lg px-3 py-2 flex items-center gap-2 text-[13px]" style={{ background: 'var(--color-accent)', color: '#000' }}>
+          <span className="flex-1 min-w-0 truncate font-medium">{pending.action === 'copy' ? 'Copy' : 'Move'} “{pending.occ.name}” — tap a day</span>
+          <button type="button" onClick={() => setPending(null)} className="press font-semibold">Cancel</button>
+        </div>
+      )}
+
       <div className="px-2">
         <div className="grid grid-cols-7 mb-1">
           {DOW.map((d, i) => (
@@ -80,8 +106,9 @@ export function CalendarView({ schedule, journal, library, handlers }) {
               <button
                 key={dateKey}
                 type="button"
-                onClick={() => setSelectedDate(dateKey)}
+                onClick={() => onDayTap(dateKey)}
                 className="press relative h-12 flex flex-col items-center justify-center rounded-lg active:bg-[var(--color-cell-pressed)]"
+                style={pending ? { outline: '1px dashed var(--color-sep)' } : undefined}
               >
                 <span
                   className={`text-[15px] tabular ${isToday ? 'w-7 h-7 rounded-full flex items-center justify-center font-semibold' : ''} ${inMonth ? 'text-white' : 'text-[var(--color-tertiary)]'}`}
@@ -112,7 +139,7 @@ export function CalendarView({ schedule, journal, library, handlers }) {
         doneKeys={doneKeys}
         library={library}
         onClose={() => setSelectedDate(null)}
-        handlers={handlers}
+        handlers={daySheetHandlers}
       />
     </div>
   );

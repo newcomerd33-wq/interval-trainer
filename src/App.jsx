@@ -2133,6 +2133,20 @@ export default function App() {
       // Start the recurrence on the tapped day so it doesn't backfill prior weeks.
       persistSchedule(addRule(schedule, { id: uid(), libraryId: item.id, name: item.name, kind: 'weekly', daysOfWeek, startDate, createdAt: Date.now() }));
     },
+    onAddEveryN: (item, intervalDays, anchorDate) => {
+      // anchorDate doubles as the start (occurrences only fall on/after it).
+      persistSchedule(addRule(schedule, { id: uid(), libraryId: item.id, name: item.name, kind: 'everyN', intervalDays, anchorDate, startDate: anchorDate, createdAt: Date.now() }));
+    },
+    onCopyToDate: (occ, date) => {
+      persistSchedule(addOneOff(schedule, { id: uid(), date, libraryId: occ.libraryId, name: occ.name, status: 'planned', createdAt: Date.now() }));
+    },
+    onMoveToDate: (occ, date) => {
+      // one-off: relocate it. rule occurrence: skip the original date + drop a one-off
+      // on the target (move = skip + oneOff, per the model).
+      let s = occ.source === 'oneoff' ? removeOneOff(schedule, occ.oneOffId) : addException(schedule, occ.ruleId, occ.date);
+      s = addOneOff(s, { id: uid(), date, libraryId: occ.libraryId, name: occ.name, status: 'planned', createdAt: Date.now() });
+      persistSchedule(s);
+    },
   };
 
   const requestJournalDelete = (entry) => setPendingJournalDelete(entry);

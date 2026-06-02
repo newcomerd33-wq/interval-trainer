@@ -33,6 +33,7 @@ export function DaySheet({ open, date, occurrences, doneKeys, library, onClose, 
 
   const addOneOff = (item) => { handlers.onAddOneOff(date, item); setMode('list'); setPicked(null); };
   const addWeekly = (item) => { handlers.onAddWeekly(item, [weekday], date); setMode('list'); setPicked(null); };
+  const addEveryN = (item, n) => { handlers.onAddEveryN(item, n, date); setMode('list'); setPicked(null); };
 
   return (
     <Sheet open={open} onClose={onClose} title={prettyDate(date)} primaryLabel="Done" onPrimary={onClose}>
@@ -79,9 +80,13 @@ export function DaySheet({ open, date, occurrences, doneKeys, library, onClose, 
                         <button type="button" onClick={() => { handlers.onRemove(occ); setConfirmRemoveId(null); }} className="press text-red-400 font-semibold">Remove</button>
                       </div>
                     ) : (
-                      <div className="mt-2 flex items-center gap-4 text-[13px]">
+                      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]">
                         {!done && !skipped && (
-                          <button type="button" onClick={() => handlers.onSkip(occ)} className="press text-[var(--color-secondary)]">Skip this day</button>
+                          <>
+                            <button type="button" onClick={() => handlers.onSkip(occ)} className="press text-[var(--color-secondary)]">Skip this day</button>
+                            <button type="button" onClick={() => handlers.onCopy(occ)} className="press text-[var(--color-accent)]">Copy</button>
+                            <button type="button" onClick={() => handlers.onMove(occ)} className="press text-[var(--color-accent)]">Move</button>
+                          </>
                         )}
                         <button type="button" onClick={() => (occ.source === 'rule' ? setConfirmRemoveId(occ.id) : handlers.onRemove(occ))} className="press text-red-400">
                           {occ.source === 'rule' ? 'Remove series' : 'Remove'}
@@ -141,6 +146,15 @@ export function DaySheet({ open, date, occurrences, doneKeys, library, onClose, 
               style={{ background: 'var(--color-accent)', color: '#000' }}>
               Every {WEEKDAYS[weekday]}
             </button>
+            <div className="pt-1">
+              <div className="text-[12px] text-[var(--color-secondary)] text-center mb-1.5">Or every N days</div>
+              <div className="flex gap-2 justify-center">
+                {[2, 3, 4, 7].map((n) => (
+                  <button key={n} type="button" onClick={() => addEveryN(picked, n)}
+                    className="press px-3 h-10 rounded-xl bg-[var(--color-cell)] text-[14px] font-medium">{n} days</button>
+                ))}
+              </div>
+            </div>
           </div>
           <button type="button" onClick={() => setMode('pick')} className="press w-full mt-2 h-10 text-[14px] text-[var(--color-secondary)]">Back</button>
         </div>
