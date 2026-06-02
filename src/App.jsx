@@ -1426,8 +1426,14 @@ function TimerView({ session, onBack, onLogResult, activeLog, exerciseHistory = 
     if (i < 0) return null;
     const name = slots[i].name;
     const key = normalizeExerciseName(name);
+    // The slot IS the set, but a uniform-unilateral exercise emits L then R for
+    // ONE logical set. Count only non-R slots (matches expandSetsFromSlots), so
+    // both the L and R slot map to the same set index.
     let setIdx = -1;
-    for (let j = 0; j <= i; j++) if (!slots[j].isRest && normalizeExerciseName(slots[j].name) === key) setIdx++;
+    for (let j = 0; j <= i; j++) {
+      if (slots[j].isRest || slots[j].side === 'R') continue;
+      if (normalizeExerciseName(slots[j].name) === key) setIdx++;
+    }
     return { exName: name, setIdx: Math.max(0, setIdx) };
   })();
   // Frozen while typing, otherwise follows the timer.
@@ -1463,7 +1469,8 @@ function TimerView({ session, onBack, onLogResult, activeLog, exerciseHistory = 
     const empty = ['weight', 'reps', 'rpe', 'timeSec', 'distance', 'value'].every((f) => s[f] == null || s[f] === '');
     if (!s.done && empty && sugg) {
       const ns = { ...s, done: true };
-      for (const f of Object.keys(sugg)) if (sugg[f] != null && f in ns) ns[f] = sugg[f];
+      // Copy only metric fields — never done/id/extras from the prior saved set.
+      for (const f of fieldsForMetric(ex.metricKind)) if (sugg[f] != null) ns[f] = sugg[f];
       sets[setIdx] = ns;
     } else {
       sets[setIdx] = { ...s, done: !s.done };
