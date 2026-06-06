@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { Plus, Trash2, ChevronDown, ChevronUp, Check } from 'lucide-react';
 import { NavBar, Group, GroupHeader, GroupFooter } from './ui.jsx';
-import { emptyExercise, emptySet, fieldsForMetric, SET_NUMERIC_FIELDS } from '../journal.js';
+import { emptyExercise, emptySet, fieldsForMetric, SET_NUMERIC_FIELDS, cascadeField, isSetComplete } from '../journal.js';
 import { METRIC_KINDS } from '../catalog.js';
 
 const KIND_LABEL = {
@@ -81,27 +81,29 @@ export function LogEditorView({ draft, mode, suggestions = {}, onSave, onCancel 
   const removeSet = (exIdx, setIdx) =>
     updateExercise(exIdx, (ex) => ({ ...ex, sets: ex.sets.filter((_, i) => i !== setIdx) }));
 
+  // Edits cascade: a value entered on a set fills every later set that's still
+  // blank or was auto-filled, leaving hand-edited sets untouched.
   const updateSet = (exIdx, setIdx, p) =>
-    updateExercise(exIdx, (ex) => ({
-      ...ex,
-      sets: ex.sets.map((s, i) => (i === setIdx ? { ...s, ...p } : s)),
-    }));
+    updateExercise(exIdx, (ex) => {
+      let sets = ex.sets;
+      for (const [field, value] of Object.entries(p)) sets = cascadeField(sets, setIdx, field, value);
+      return { ...ex, sets };
+    });
 
-  // Tapping the check on an empty set fills it from the suggestion and marks it
-  // done (one-tap "same as last time"); otherwise it just toggles done.
+  // The status dot auto-fills from completeness (all fields incl. RPE), so it's
+  // not a manual toggle. Tapping a still-blank set fills it from last time's
+  // values as a one-tap "same as last time", which then cascades downward.
   const confirmSet = (exIdx, setIdx) =>
     updateExercise(exIdx, (ex) => {
       const s = ex.sets[setIdx];
       const sugg = suggestions[ex.exerciseId]?.[setIdx];
       const empty = SET_NUMERIC_FIELDS.every((f) => s[f] == null || s[f] === '');
-      let ns;
-      if (!s.done && empty && sugg) {
-        ns = { ...s, done: true };
-        for (const f of fieldsForMetric(ex.metricKind)) if (sugg[f] != null) ns[f] = sugg[f];
-      } else {
-        ns = { ...s, done: !s.done };
+      if (!(empty && sugg)) return ex; // dot is status-only once data exists
+      let sets = ex.sets;
+      for (const f of fieldsForMetric(ex.metricKind)) {
+        if (sugg[f] != null) sets = cascadeField(sets, setIdx, f, sugg[f]);
       }
-      return { ...ex, sets: ex.sets.map((x, i) => (i === setIdx ? ns : x)) };
+      return { ...ex, sets };
     });
 
   // Switching metric kind keeps rows; carries fields valid in both kinds.
@@ -211,19 +213,20 @@ export function LogEditorView({ draft, mode, suggestions = {}, onSave, onCancel 
                 {/* sets */}
                 {ex.sets.map((s, setIdx) => {
                   const sugg = suggestions[ex.exerciseId]?.[setIdx];
+                  const complete = isSetComplete(s, ex.metricKind);
                   return (
                   <div key={s.id} className="sep-row flex items-center gap-2 px-4 py-2">
                     <button
                       type="button"
                       onClick={() => confirmSet(exIdx, setIdx)}
-                      aria-label="Confirm set"
+                      aria-label="Set complete"
                       className="press w-7 h-7 rounded-full flex items-center justify-center shrink-0 border"
                       style={{
-                        background: s.done ? 'var(--color-accent)' : 'transparent',
-                        borderColor: s.done ? 'var(--color-accent)' : 'var(--color-sep)',
+                        background: complete ? 'var(--color-accent)' : 'transparent',
+                        borderColor: complete ? 'var(--color-accent)' : 'var(--color-sep)',
                       }}
                     >
-                      {s.done && <Check size={15} strokeWidth={3} className="text-black" />}
+                      {complete && <Check size={15} strokeWidth={3} className="text-black" />}
                     </button>
                     <div className="text-[13px] text-[var(--color-tertiary)] w-5 shrink-0 tabular">{setIdx + 1}</div>
                     <div className="flex-1 flex items-center gap-2 min-w-0">

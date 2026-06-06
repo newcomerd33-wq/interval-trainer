@@ -13,15 +13,7 @@
 // =============================================================================
 
 import { Sheet } from './ui.jsx';
-import { isLoggedSet, fieldsForMetric } from '../journal.js';
-
-function fmtSet(s, fields) {
-  if (fields.includes('weight')) return `${s.weight ?? '–'}×${s.reps ?? '–'}`;
-  if (fields.includes('distance')) return `${s.distance ?? '–'}/${s.timeSec ?? '–'}s`;
-  if (fields.includes('timeSec')) return `${s.timeSec ?? '–'}s`;
-  if (fields.includes('reps')) return `${s.reps ?? '–'}`;
-  return `${s.value ?? '–'}`;
-}
+import { isLoggedSet, formatSetGroups } from '../journal.js';
 
 export function ReviewLog({ open, draft, onClose, onSave, onOpenEditor, onDiscard, onNotesChange }) {
   if (!draft) return null;
@@ -42,7 +34,7 @@ export function ReviewLog({ open, draft, onClose, onSave, onOpenEditor, onDiscar
             <div key={ex.id} className="sep-row px-4 py-2.5">
               <div className="text-[15px] text-white">{ex.nameSnapshot || 'Exercise'}</div>
               <div className="text-[13px] text-[var(--color-secondary)] mt-0.5 tabular">
-                {sets.map((s) => fmtSet(s, fieldsForMetric(ex.metricKind))).join(' · ')}
+                {formatSetGroups(sets, ex.metricKind)}
               </div>
             </div>
           ))}

@@ -15,7 +15,7 @@ import { addRule, removeRule, addOneOff, removeOneOff, setOneOffStatus, addExcep
 import { loadLibrary, saveLibrary, loadJournal, saveJournal, loadExercises, saveExercises, loadSchedule, saveSchedule, buildBackup, loadActiveLog, saveActiveLog, clearActiveLog } from './storage.js';
 import { exercisesForItem, expandSetsFromSlots } from './exercises.js';
 import { ensureExercise, findExercise, normalizeExerciseName } from './catalog.js';
-import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt, suggestionsForExercise, recentSessionsForExercise, lastExerciseLogged, emptySet, fieldsForMetric, pruneEntry, hasLoggedContent, isLoggedSet } from './journal.js';
+import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt, suggestionsForExercise, recentSessionsForExercise, lastExerciseLogged, emptySet, fieldsForMetric, pruneEntry, hasLoggedContent, isLoggedSet, cascadeField, isSetComplete, formatSetGroups } from './journal.js';
 import { todayKey, addDays } from './date.js';
 
 // Boxing bell samples (Vite resolves these to hashed URLs at build time)
@@ -1480,7 +1480,10 @@ function TimerView({ session, onRequestBack, onLogResult, onReview, activeLogHas
   const logTarget = frozenTarget || liveTarget;
 
   // Write a single field for the target set, lazily creating the draft and
-  // padding sets if needed. Auto-saves immediately (App persists).
+  // padding sets if needed. The value cascades to every later set that's still
+  // blank or auto-filled (hand-edited sets are preserved). Auto-saves (App
+  // persists), so cascade-filled sets are there when the timer reaches them and
+  // when the post-completion editor opens.
   const commitLog = (exName, setIdx, field, value) => {
     let draft = activeLog || (onStartDraft && onStartDraft());
     if (!draft) return;
@@ -1488,13 +1491,15 @@ function TimerView({ session, onRequestBack, onLogResult, onReview, activeLogHas
     const exIdx = draft.exercises.findIndex((e) => normalizeExerciseName(e.nameSnapshot) === key);
     if (exIdx < 0) return;
     const ex = draft.exercises[exIdx];
-    const sets = ex.sets.slice();
+    let sets = ex.sets.slice();
     while (sets.length <= setIdx) sets.push(emptySet(ex.metricKind));
-    sets[setIdx] = { ...sets[setIdx], [field]: value };
+    sets = cascadeField(sets, setIdx, field, value);
     onUpdateDraft({ ...draft, exercises: draft.exercises.map((e, i) => (i === exIdx ? { ...ex, sets } : e)) });
   };
 
-  // Tap the check: fill an empty set from the suggestion + mark done, else toggle.
+  // The dot is a completeness indicator, not a manual toggle. Tapping a blank
+  // set fills it from last time's values (one-tap "same as last time"), which
+  // then cascades downward; once a set has data the dot is status-only.
   const confirmLog = (exName, setIdx) => {
     let draft = activeLog || (onStartDraft && onStartDraft());
     if (!draft) return;
@@ -1502,18 +1507,15 @@ function TimerView({ session, onRequestBack, onLogResult, onReview, activeLogHas
     const exIdx = draft.exercises.findIndex((e) => normalizeExerciseName(e.nameSnapshot) === key);
     if (exIdx < 0) return;
     const ex = draft.exercises[exIdx];
-    const sets = ex.sets.slice();
+    let sets = ex.sets.slice();
     while (sets.length <= setIdx) sets.push(emptySet(ex.metricKind));
     const s = sets[setIdx];
     const sugg = exerciseHistory[key]?.suggestions?.[setIdx];
     const empty = ['weight', 'reps', 'rpe', 'timeSec', 'distance', 'value'].every((f) => s[f] == null || s[f] === '');
-    if (!s.done && empty && sugg) {
-      const ns = { ...s, done: true };
-      // Copy only metric fields — never done/id/extras from the prior saved set.
-      for (const f of fieldsForMetric(ex.metricKind)) if (sugg[f] != null) ns[f] = sugg[f];
-      sets[setIdx] = ns;
-    } else {
-      sets[setIdx] = { ...s, done: !s.done };
+    if (!(empty && sugg)) return;
+    // Copy only metric fields — never id/extras from the prior saved set.
+    for (const f of fieldsForMetric(ex.metricKind)) {
+      if (sugg[f] != null) sets = cascadeField(sets, setIdx, f, sugg[f]);
     }
     onUpdateDraft({ ...draft, exercises: draft.exercises.map((e, i) => (i === exIdx ? { ...ex, sets } : e)) });
   };
@@ -1619,15 +1621,20 @@ function TimerView({ session, onRequestBack, onLogResult, onReview, activeLogHas
                       placeholder={sugg?.[f] != null ? String(sugg[f]) : PH[f]}
                       className="w-16 bg-[var(--color-cell)] rounded-lg px-2 py-2 text-[17px] text-white text-center tabular placeholder:text-[var(--color-tertiary)] focus:outline-none" />
                   ))}
-                  <button type="button" onClick={() => confirmLog(logTarget.exName, logTarget.setIdx)} aria-label="Confirm set"
+                  {(() => {
+                    const complete = isSetComplete(curSet, metricKind);
+                    return (
+                  <button type="button" onClick={() => confirmLog(logTarget.exName, logTarget.setIdx)} aria-label="Set complete"
                     className="press w-9 h-9 rounded-full flex items-center justify-center shrink-0 border"
-                    style={{ background: curSet?.done ? ringColor : 'transparent', borderColor: curSet?.done ? ringColor : 'var(--color-sep)' }}>
-                    {curSet?.done && <Check size={16} strokeWidth={3} className="text-black" />}
+                    style={{ background: complete ? ringColor : 'transparent', borderColor: complete ? ringColor : 'var(--color-sep)' }}>
+                    {complete && <Check size={16} strokeWidth={3} className="text-black" />}
                   </button>
+                    );
+                  })()}
                 </div>
                 {last && (
                   <div className="text-center text-[12px] text-[var(--color-tertiary)] mt-1.5 tabular truncate">
-                    Last: {last.sets.map((s) => (s.weight != null ? `${s.weight}×${s.reps ?? '–'}` : s.reps != null ? `${s.reps}` : s.timeSec != null ? `${s.timeSec}s` : '–')).join(' · ')}
+                    Last: {formatSetGroups(last.sets, metricKind)}
                   </div>
                 )}
               </div>

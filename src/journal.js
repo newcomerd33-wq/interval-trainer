@@ -200,6 +200,39 @@ export function seedExercisesForLog({ derived, catalog, journal, beforeDate, exc
   return { catalog: cat, exercises };
 }
 
+// --- cascade + completion (within-session) -----------------------------------
+
+// Cascade a single field's value from set `fromIdx` downward. The edited set is
+// marked manual for that field (its auto flag cleared); each later set is
+// overwritten ONLY if that field is blank or was previously cascade-filled
+// (auto) — values the user typed by hand are protected and skipped. Provenance
+// lives in set.auto[field], a transient marker stripped by pruneEntry before a
+// set is ever written to history. Empty values never propagate downstream.
+export function cascadeField(sets, fromIdx, field, value) {
+  const list = sets || [];
+  const blankVal = value == null || value === '';
+  return list.map((s, i) => {
+    if (i < fromIdx) return s;
+    if (i === fromIdx) {
+      const auto = { ...(s.auto || {}) };
+      delete auto[field]; // user set it explicitly -> manual
+      return { ...s, [field]: value, auto };
+    }
+    if (blankVal) return s;
+    const blank = s[field] == null || s[field] === '';
+    const isAuto = !!(s.auto && s.auto[field]);
+    if (!blank && !isAuto) return s; // hand-edited downstream -> protect
+    return { ...s, [field]: value, auto: { ...(s.auto || {}), [field]: true } };
+  });
+}
+
+// A set is "complete" once every field its metric surfaces (RPE included) holds
+// data. Drives the auto-filling status dot in both loggers — no manual toggle.
+export function isSetComplete(set, metricKind) {
+  if (!set) return false;
+  return fieldsForMetric(metricKind).every((f) => set[f] != null && set[f] !== '');
+}
+
 // --- logged-set detection + pruning ------------------------------------------
 
 export const SET_NUMERIC_FIELDS = ['weight', 'reps', 'rpe', 'timeSec', 'distance', 'value'];
@@ -218,7 +251,11 @@ export function isLoggedSet(set) {
 // belongs in the session-level notes field).
 export function pruneEntry(entry) {
   const exercises = (entry.exercises || [])
-    .map((ex) => ({ ...ex, sets: (ex.sets || []).filter(isLoggedSet) }))
+    .map((ex) => ({
+      ...ex,
+      // Drop unlogged sets and strip transient cascade provenance (set.auto).
+      sets: (ex.sets || []).filter(isLoggedSet).map(({ auto, ...s }) => s),
+    }))
     .filter((ex) => ex.sets.length > 0);
   return { ...entry, exercises };
 }
@@ -269,6 +306,47 @@ export function removeEntry(journal, id) {
 }
 
 // --- display helpers (pure) --------------------------------------------------
+
+// The fields a set actually shows in summaries — the metric's fields minus RPE
+// (RPE is a per-set feeling, never part of the headline string).
+export function displayFieldsForMetric(kind) {
+  return fieldsForMetric(kind).filter((f) => f !== 'rpe');
+}
+
+function fmtSetDisplay(set, fields) {
+  if (fields.includes('weight')) return `${set.weight ?? '–'}×${set.reps ?? '–'}`;
+  if (fields.includes('distance')) return `${set.distance ?? '–'}/${set.timeSec ?? '–'}s`;
+  if (fields.includes('timeSec')) return `${set.timeSec ?? '–'}s`;
+  if (fields.includes('reps')) return `${set.reps ?? '–'}`;
+  return `${set.value ?? '–'}`;
+}
+
+// Run-length-encode CONSECUTIVE identical sets by their display fields, so a
+// session of 16 matching sets collapses to one run. Non-adjacent runs stay
+// separate (185×5 ×11, then 195×4 ×5). Returns [{ count, set, fields }].
+export function groupSets(sets, metricKind) {
+  const fields = displayFieldsForMetric(metricKind);
+  const out = [];
+  for (const s of sets || []) {
+    const prev = out[out.length - 1];
+    if (prev && fields.every((f) => (prev.set[f] ?? null) === (s[f] ?? null))) {
+      prev.count += 1;
+    } else {
+      out.push({ count: 1, set: { ...s }, fields });
+    }
+  }
+  return out;
+}
+
+// Compact one-line summary of grouped sets, e.g. "185×5 ×11 · 195×4 ×5".
+export function formatSetGroups(sets, metricKind) {
+  return groupSets(sets, metricKind)
+    .map((g) => {
+      const base = fmtSetDisplay(g.set, g.fields);
+      return g.count > 1 ? `${base} ×${g.count}` : base;
+    })
+    .join(' · ');
+}
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 

@@ -24,6 +24,11 @@ import {
   suggestionsForExercise,
   recentSessionsForExercise,
   hasLoggedContent,
+  cascadeField,
+  isSetComplete,
+  groupSets,
+  formatSetGroups,
+  displayFieldsForMetric,
 } from './journal.js';
 
 // deterministic id generator
@@ -282,4 +287,96 @@ test('withUpdatedAt bumps only updatedAt', () => {
   assert.equal(u.updatedAt, 99);
   assert.equal(u.loggedAt, 1);
   assert.equal(u.foo, 'bar');
+});
+
+// --- cascade -----------------------------------------------------------------
+
+const mkSets = (n) => Array.from({ length: n }, () => ({ weight: null, reps: null, rpe: null }));
+
+test('cascadeField fills the edited set and all blank sets below it', () => {
+  let sets = mkSets(4);
+  sets = cascadeField(sets, 0, 'weight', 185);
+  assert.deepEqual(sets.map((s) => s.weight), [185, 185, 185, 185]);
+  // source is manual, downstream are auto-flagged
+  assert.equal(sets[0].auto?.weight, undefined);
+  assert.deepEqual([sets[1], sets[2], sets[3]].map((s) => !!s.auto?.weight), [true, true, true]);
+});
+
+test('cascadeField re-cascades over previously auto-filled sets', () => {
+  let sets = mkSets(5);
+  sets = cascadeField(sets, 0, 'weight', 185); // 1->all
+  sets = cascadeField(sets, 3, 'weight', 155); // edit set 4 -> 4,5 only
+  assert.deepEqual(sets.map((s) => s.weight), [185, 185, 185, 155, 155]);
+});
+
+test('cascadeField protects a hand-edited downstream set and continues past it', () => {
+  let sets = mkSets(4);
+  sets = cascadeField(sets, 2, 'weight', 999); // set 3 typed by hand (manual, non-blank)
+  sets = cascadeField(sets, 0, 'weight', 185); // cascade from set 1
+  // set 3 (idx 2) keeps its manual value; set 4 below it still gets filled
+  assert.deepEqual(sets.map((s) => s.weight), [185, 185, 999, 185]);
+});
+
+test('cascadeField does not propagate an empty value downstream', () => {
+  let sets = mkSets(3);
+  sets = cascadeField(sets, 0, 'weight', 185);
+  sets = cascadeField(sets, 0, 'weight', ''); // clearing set 1
+  assert.equal(sets[0].weight, '');
+  assert.deepEqual([sets[1].weight, sets[2].weight], [185, 185]);
+});
+
+// --- completion --------------------------------------------------------------
+
+test('isSetComplete requires every field including rpe', () => {
+  assert.equal(isSetComplete({ weight: 185, reps: 5, rpe: 7 }, 'weight_reps'), true);
+  assert.equal(isSetComplete({ weight: 185, reps: 5, rpe: null }, 'weight_reps'), false);
+  assert.equal(isSetComplete({ reps: 10, rpe: 8 }, 'reps_only'), true);
+  assert.equal(isSetComplete({ timeSec: 30 }, 'time'), true);
+  assert.equal(isSetComplete(null, 'weight_reps'), false);
+});
+
+// --- grouping ----------------------------------------------------------------
+
+test('displayFieldsForMetric drops rpe', () => {
+  assert.deepEqual(displayFieldsForMetric('weight_reps'), ['weight', 'reps']);
+  assert.deepEqual(displayFieldsForMetric('reps_only'), ['reps']);
+});
+
+test('groupSets run-length-encodes consecutive identical sets', () => {
+  const sets = Array.from({ length: 16 }, () => ({ weight: 185, reps: 5, rpe: 7 }));
+  const g = groupSets(sets, 'weight_reps');
+  assert.equal(g.length, 1);
+  assert.equal(g[0].count, 16);
+});
+
+test('groupSets ignores rpe and splits non-adjacent runs', () => {
+  const sets = [
+    { weight: 185, reps: 5, rpe: 7 },
+    { weight: 185, reps: 5, rpe: 9 }, // same display, diff rpe -> same run
+    { weight: 195, reps: 4, rpe: 8 },
+    { weight: 185, reps: 5, rpe: 7 }, // non-adjacent -> new run
+  ];
+  const g = groupSets(sets, 'weight_reps');
+  assert.deepEqual(g.map((x) => x.count), [2, 1, 1]);
+});
+
+test('formatSetGroups renders the compact summary string', () => {
+  const sets = [
+    ...Array.from({ length: 11 }, () => ({ weight: 185, reps: 5, rpe: 7 })),
+    ...Array.from({ length: 5 }, () => ({ weight: 195, reps: 4, rpe: 8 })),
+  ];
+  assert.equal(formatSetGroups(sets, 'weight_reps'), '185×5 ×11 · 195×4 ×5');
+  assert.equal(formatSetGroups([{ weight: 225, reps: 3 }], 'weight_reps'), '225×3');
+});
+
+test('pruneEntry strips transient cascade provenance', () => {
+  const entry = {
+    exercises: [
+      { id: 'e1', nameSnapshot: 'Squat', metricKind: 'weight_reps',
+        sets: [{ weight: 185, reps: 5, auto: { reps: true } }] },
+    ],
+  };
+  const pruned = pruneEntry(entry);
+  assert.equal('auto' in pruned.exercises[0].sets[0], false);
+  assert.equal(pruned.exercises[0].sets[0].weight, 185);
 });
