@@ -25,8 +25,13 @@ export const METRIC_FIELDS = {
   reps_only: ['reps', 'rpe'],
   time: ['timeSec'],
   distance_time: ['distance', 'timeSec'],
+  bands: ['color', 'reps'],
   freeform: ['value'],
 };
+
+// Set fields that hold free text rather than numbers (everything else is
+// numeric). Drives input type, emptiness checks, and save-time coercion.
+export const SET_TEXT_FIELDS = ['color'];
 
 // RPE is a per-performance feeling, not a target — never carried forward.
 const CARRY_EXCLUDE = new Set(['rpe']);
@@ -48,6 +53,7 @@ export function emptySet(metricKind = DEFAULT_METRIC_KIND, opts = {}) {
     timeSec: null,
     distance: null,
     value: null,
+    color: null,
     extras: {},
   };
 }
@@ -237,13 +243,38 @@ export function isSetComplete(set, metricKind) {
 
 export const SET_NUMERIC_FIELDS = ['weight', 'reps', 'rpe', 'timeSec', 'distance', 'value'];
 
+// Every field that can hold a logged value (numeric + free text). Used for
+// emptiness checks and "is this set logged?" so a bands set with only a color
+// still counts.
+export const ALL_SET_FIELDS = [...SET_NUMERIC_FIELDS, ...SET_TEXT_FIELDS];
+
 // A set counts as "logged" (vs. an untouched suggestion) if it's marked done or
 // has any value entered. Underpins suggestions-until-confirmed: placeholders that
 // the user never touched are NOT logged and get dropped on save.
 export function isLoggedSet(set) {
   if (!set) return false;
   if (set.done) return true;
-  return SET_NUMERIC_FIELDS.some((f) => set[f] != null && set[f] !== '');
+  return ALL_SET_FIELDS.some((f) => set[f] != null && set[f] !== '');
+}
+
+function numOrNull(v) {
+  if (v === '' || v == null) return null;
+  const n = Number(v);
+  return Number.isNaN(n) ? null : n;
+}
+
+// Normalize a set's stored values regardless of which logger produced them:
+// numeric fields -> number|null, text fields -> trimmed string|null. Idempotent,
+// so running it over already-clean editor output is harmless. Keeps id/done/
+// extras; transient `auto` provenance is dropped by pruneEntry beforehand.
+export function coerceSet(set) {
+  const out = { ...set };
+  for (const f of SET_NUMERIC_FIELDS) out[f] = numOrNull(set[f]);
+  for (const f of SET_TEXT_FIELDS) {
+    const t = set[f] == null ? '' : String(set[f]).trim();
+    out[f] = t === '' ? null : t;
+  }
+  return out;
 }
 
 // Drop unlogged sets, then drop exercises left with no logged sets (note-only
@@ -314,6 +345,7 @@ export function displayFieldsForMetric(kind) {
 }
 
 function fmtSetDisplay(set, fields) {
+  if (fields.includes('color')) return `${set.reps ?? '–'} × ${set.color ?? '–'}`;
   if (fields.includes('weight')) return `${set.weight ?? '–'}×${set.reps ?? '–'}`;
   if (fields.includes('distance')) return `${set.distance ?? '–'}/${set.timeSec ?? '–'}s`;
   if (fields.includes('timeSec')) return `${set.timeSec ?? '–'}s`;

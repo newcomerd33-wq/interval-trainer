@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { Plus, Trash2, ChevronDown, ChevronUp, Check } from 'lucide-react';
 import { NavBar, Group, GroupHeader, GroupFooter } from './ui.jsx';
-import { emptyExercise, emptySet, fieldsForMetric, SET_NUMERIC_FIELDS, cascadeField, isSetComplete } from '../journal.js';
+import { emptyExercise, emptySet, fieldsForMetric, SET_NUMERIC_FIELDS, ALL_SET_FIELDS, SET_TEXT_FIELDS, cascadeField, isSetComplete } from '../journal.js';
 import { METRIC_KINDS } from '../catalog.js';
 
 const KIND_LABEL = {
@@ -18,6 +18,7 @@ const KIND_LABEL = {
   reps_only: 'Reps only',
   time: 'Time',
   distance_time: 'Distance + time',
+  bands: 'Bands',
   freeform: 'Freeform',
 };
 
@@ -27,6 +28,7 @@ const FIELD = {
   rpe: { label: 'RPE', ph: 'rpe' },
   timeSec: { label: 'Time (s)', ph: 'sec' },
   distance: { label: 'Distance', ph: 'dist' },
+  color: { label: 'Color', ph: 'color' },
   value: { label: 'Value', ph: 'value' },
 };
 
@@ -97,7 +99,7 @@ export function LogEditorView({ draft, mode, suggestions = {}, onSave, onCancel 
     updateExercise(exIdx, (ex) => {
       const s = ex.sets[setIdx];
       const sugg = suggestions[ex.exerciseId]?.[setIdx];
-      const empty = SET_NUMERIC_FIELDS.every((f) => s[f] == null || s[f] === '');
+      const empty = ALL_SET_FIELDS.every((f) => s[f] == null || s[f] === '');
       if (!(empty && sugg)) return ex; // dot is status-only once data exists
       let sets = ex.sets;
       for (const f of fieldsForMetric(ex.metricKind)) {
@@ -230,18 +232,21 @@ export function LogEditorView({ draft, mode, suggestions = {}, onSave, onCancel 
                     </button>
                     <div className="text-[13px] text-[var(--color-tertiary)] w-5 shrink-0 tabular">{setIdx + 1}</div>
                     <div className="flex-1 flex items-center gap-2 min-w-0">
-                      {fields.map((f) => (
+                      {fields.map((f) => {
+                        const isText = SET_TEXT_FIELDS.includes(f);
+                        return (
                         <input
                           key={f}
                           type="text"
-                          inputMode="decimal"
+                          inputMode={isText ? 'text' : 'decimal'}
                           value={inputVal(s[f])}
                           onChange={(e) => updateSet(exIdx, setIdx, { [f]: e.target.value })}
                           onFocus={(e) => e.target.select()}
                           placeholder={sugg?.[f] != null ? String(sugg[f]) : FIELD[f].ph}
-                          className="min-w-0 flex-1 bg-[var(--color-cell-pressed)] rounded-lg px-2 py-1.5 text-[15px] text-white text-center tabular placeholder:text-[var(--color-tertiary)] focus:outline-none"
+                          className={`min-w-0 flex-1 bg-[var(--color-cell-pressed)] rounded-lg px-2 py-1.5 text-[15px] text-white text-center placeholder:text-[var(--color-tertiary)] focus:outline-none ${isText ? '' : 'tabular'}`}
                         />
-                      ))}
+                        );
+                      })}
                     </div>
                     <button
                       type="button"

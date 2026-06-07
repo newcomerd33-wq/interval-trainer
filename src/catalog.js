@@ -11,7 +11,7 @@
 //   { id, name, aliases: [], defaultMetricKind, defaultUnit, createdAt, updatedAt }
 // =============================================================================
 
-export const METRIC_KINDS = ['weight_reps', 'reps_only', 'time', 'distance_time', 'freeform'];
+export const METRIC_KINDS = ['weight_reps', 'reps_only', 'time', 'distance_time', 'bands', 'freeform'];
 export const DEFAULT_METRIC_KIND = 'weight_reps';
 export const DEFAULT_UNIT = 'lb';
 

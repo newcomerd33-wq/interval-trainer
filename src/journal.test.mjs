@@ -29,6 +29,7 @@ import {
   groupSets,
   formatSetGroups,
   displayFieldsForMetric,
+  coerceSet,
 } from './journal.js';
 
 // deterministic id generator
@@ -367,6 +368,48 @@ test('formatSetGroups renders the compact summary string', () => {
   ];
   assert.equal(formatSetGroups(sets, 'weight_reps'), '185×5 ×11 · 195×4 ×5');
   assert.equal(formatSetGroups([{ weight: 225, reps: 3 }], 'weight_reps'), '225×3');
+});
+
+// --- bands metric ------------------------------------------------------------
+
+test('bands metric surfaces color + reps (no rpe)', () => {
+  assert.deepEqual(fieldsForMetric('bands'), ['color', 'reps']);
+  assert.deepEqual(displayFieldsForMetric('bands'), ['color', 'reps']);
+});
+
+test('isLoggedSet counts a bands set with only a color', () => {
+  assert.equal(isLoggedSet({ color: 'red', reps: null }), true);
+  assert.equal(isLoggedSet({ color: null, reps: null }), false);
+});
+
+test('isSetComplete for bands needs color and reps', () => {
+  assert.equal(isSetComplete({ color: 'red', reps: 10 }, 'bands'), true);
+  assert.equal(isSetComplete({ color: 'red', reps: null }, 'bands'), false);
+  assert.equal(isSetComplete({ color: null, reps: 10 }, 'bands'), false);
+});
+
+test('coerceSet trims text fields and parses numbers', () => {
+  const c = coerceSet({ color: '  Red  ', reps: '10', weight: '', done: true, id: 'x' });
+  assert.equal(c.color, 'Red');
+  assert.equal(c.reps, 10);
+  assert.equal(c.weight, null);
+  assert.equal(c.done, true);
+  assert.equal(c.id, 'x');
+  assert.equal(coerceSet({ color: '   ' }).color, null);
+});
+
+test('cascadeField works on a text field', () => {
+  let sets = [{ color: null }, { color: null }, { color: null }];
+  sets = cascadeField(sets, 0, 'color', 'Red');
+  assert.deepEqual(sets.map((s) => s.color), ['Red', 'Red', 'Red']);
+});
+
+test('formatSetGroups renders bands as reps × color', () => {
+  const sets = [
+    ...Array.from({ length: 3 }, () => ({ color: 'Red', reps: 10 })),
+    { color: 'Black', reps: 8 },
+  ];
+  assert.equal(formatSetGroups(sets, 'bands'), '10 × Red ×3 · 8 × Black');
 });
 
 test('pruneEntry strips transient cascade provenance', () => {

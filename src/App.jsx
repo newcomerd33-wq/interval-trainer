@@ -15,7 +15,7 @@ import { addRule, removeRule, addOneOff, removeOneOff, setOneOffStatus, addExcep
 import { loadLibrary, saveLibrary, loadJournal, saveJournal, loadExercises, saveExercises, loadSchedule, saveSchedule, buildBackup, loadActiveLog, saveActiveLog, clearActiveLog } from './storage.js';
 import { exercisesForItem, expandSetsFromSlots } from './exercises.js';
 import { ensureExercise, findExercise, normalizeExerciseName } from './catalog.js';
-import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt, suggestionsForExercise, recentSessionsForExercise, lastExerciseLogged, emptySet, fieldsForMetric, pruneEntry, hasLoggedContent, isLoggedSet, cascadeField, isSetComplete, formatSetGroups } from './journal.js';
+import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt, suggestionsForExercise, recentSessionsForExercise, lastExerciseLogged, emptySet, fieldsForMetric, pruneEntry, hasLoggedContent, isLoggedSet, cascadeField, isSetComplete, formatSetGroups, coerceSet, ALL_SET_FIELDS, SET_TEXT_FIELDS } from './journal.js';
 import { todayKey, addDays } from './date.js';
 
 // Boxing bell samples (Vite resolves these to hashed URLs at build time)
@@ -1511,7 +1511,7 @@ function TimerView({ session, onRequestBack, onLogResult, onReview, activeLogHas
     while (sets.length <= setIdx) sets.push(emptySet(ex.metricKind));
     const s = sets[setIdx];
     const sugg = exerciseHistory[key]?.suggestions?.[setIdx];
-    const empty = ['weight', 'reps', 'rpe', 'timeSec', 'distance', 'value'].every((f) => s[f] == null || s[f] === '');
+    const empty = ALL_SET_FIELDS.every((f) => s[f] == null || s[f] === '');
     if (!(empty && sugg)) return;
     // Copy only metric fields — never id/extras from the prior saved set.
     for (const f of fieldsForMetric(ex.metricKind)) {
@@ -1606,21 +1606,24 @@ function TimerView({ session, onRequestBack, onLogResult, onReview, activeLogHas
             const curSet = draftEx?.sets?.[logTarget.setIdx];
             const sugg = h?.suggestions?.[logTarget.setIdx];
             const last = h?.recent?.[0];
-            const PH = { weight: 'wt', reps: 'reps', rpe: 'rpe', timeSec: 'sec', distance: 'dist', value: 'val' };
+            const PH = { weight: 'wt', reps: 'reps', rpe: 'rpe', timeSec: 'sec', distance: 'dist', color: 'color', value: 'val' };
             const iv = (v) => (v == null ? '' : v);
             return (
               <div className="mt-4 px-4">
                 <div className="flex items-center justify-center gap-2">
                   <span className="text-[12px] text-[var(--color-secondary)] shrink-0">{logTarget.exName !== currentSlot.name ? `${logTarget.exName} · ` : ''}Set {logTarget.setIdx + 1}</span>
-                  {fields.map((f) => (
-                    <input key={f} type="text" inputMode="decimal"
+                  {fields.map((f) => {
+                    const isText = SET_TEXT_FIELDS.includes(f);
+                    return (
+                    <input key={f} type="text" inputMode={isText ? 'text' : 'decimal'}
                       value={iv(curSet?.[f])}
                       onChange={(e) => commitLog(logTarget.exName, logTarget.setIdx, f, e.target.value)}
                       onFocus={(e) => { e.target.select(); setFrozenTarget(logTarget); }}
                       onBlur={() => setFrozenTarget(null)}
                       placeholder={sugg?.[f] != null ? String(sugg[f]) : PH[f]}
-                      className="w-16 bg-[var(--color-cell)] rounded-lg px-2 py-2 text-[17px] text-white text-center tabular placeholder:text-[var(--color-tertiary)] focus:outline-none" />
-                  ))}
+                      className={`${isText ? 'w-24' : 'w-16'} bg-[var(--color-cell)] rounded-lg px-2 py-2 text-[17px] text-white text-center placeholder:text-[var(--color-tertiary)] focus:outline-none ${isText ? '' : 'tabular'}`} />
+                    );
+                  })}
                   {(() => {
                     const complete = isSetComplete(curSet, metricKind);
                     return (
@@ -2063,7 +2066,10 @@ export default function App() {
       const name = ex.nameSnapshot.trim();
       const r = ensureExercise(cat, name);
       cat = r.catalog;
-      return { ...ex, nameSnapshot: name, exerciseId: r.exercise.id };
+      // Coerce values here so BOTH paths (full editor + in-timer review) store
+      // numbers as numbers and text fields trimmed, regardless of how raw the
+      // draft's strings were.
+      return { ...ex, nameSnapshot: name, exerciseId: r.exercise.id, sets: ex.sets.map(coerceSet) };
     });
     if (cat !== catalog) persistCatalog(cat);
     persistJournal(upsertEntry(journal, withUpdatedAt({ ...pruned, exercises }, Date.now())));
