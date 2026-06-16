@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
-  ChevronRight, ChevronLeft, ChevronDown, Check, Play, Pause, RotateCcw, SkipForward,
+  ChevronRight, ChevronLeft, Check, Play, Pause, RotateCcw, SkipForward,
   Volume2, VolumeX, Plus, Minus, X, Sliders, Bookmark, Trash2, Repeat, ClipboardList,
   Folder, FolderPlus, FolderOpen, FolderInput, Pencil,
 } from 'lucide-react';
@@ -14,7 +14,7 @@ import { CalendarView } from './views/CalendarView.jsx';
 import { TodayStrip } from './views/TodayStrip.jsx';
 import { addRule, removeRule, addOneOff, removeOneOff, setOneOffStatus, addException, occurrencesInRange, scheduledDoneKeys } from './schedule.js';
 import { loadLibrary, saveLibrary, loadFolders, saveFolders, loadJournal, saveJournal, loadExercises, saveExercises, loadSchedule, saveSchedule, buildBackup, loadActiveLog, saveActiveLog, clearActiveLog } from './storage.js';
-import { addFolder, renameFolder, removeFolder, moveItemToFolder, unfileItems, groupLibraryByFolder } from './folders.js';
+import { addFolder, renameFolder, removeFolder, moveItemToFolder, unfileItems } from './folders.js';
 import { exercisesForItem, expandSetsFromSlots } from './exercises.js';
 import { ensureExercise, findExercise, normalizeExerciseName, METRIC_KINDS, METRIC_LABEL, METRIC_LABEL_SHORT, DEFAULT_METRIC_KIND } from './catalog.js';
 import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt, suggestionsForExercise, recentSessionsForExercise, lastExerciseLogged, emptySet, emptyExercise, fieldsForMetric, pruneEntry, hasLoggedContent, isLoggedSet, cascadeField, isSetComplete, formatSetGroups, coerceSet, ALL_SET_FIELDS, SET_TEXT_FIELDS } from './journal.js';
@@ -1376,121 +1376,98 @@ function FolderNameDialog({ open, title, defaultName, confirmLabel = 'Save', onC
   );
 }
 
-// Pick a destination folder for an item (or Unfiled). Current folder is checked.
-function MoveToFolderSheet({ open, item, folders, onClose, onMove }) {
-  if (!item) return null;
+// Pick a destination folder for an item (or Unfiled). Centered dialog (fixed,
+// scroll-independent) so it's always visible — not a bottom sheet you can scroll
+// past. Current folder is checked.
+function MoveToFolderDialog({ open, item, folders, onClose, onMove }) {
+  if (!open || !item) return null;
   const current = item.folderId ?? null;
+  const choose = (fid) => { onMove(item.id, fid); onClose(); };
   return (
-    <Sheet open={open} onClose={onClose} title="Move to folder" primaryLabel="Done" onPrimary={onClose}>
-      <Group>
-        <Row onClick={() => { onMove(item.id, null); onClose(); }} selected={current == null}
-          leading={<Folder size={18} strokeWidth={2.2} className="text-[var(--color-secondary)]" />}>
-          Unfiled
-        </Row>
+    <CenterCard open={open} onClose={onClose}>
+      <div className="px-5 pt-5 pb-3 text-center">
+        <div className="text-[17px] font-semibold">Move to folder</div>
+        <div className="text-[13px] text-[var(--color-secondary)] mt-1 truncate">{item.name}</div>
+      </div>
+      <div className="max-h-[46vh] overflow-y-auto border-t border-white/10">
+        <button type="button" onClick={() => choose(null)}
+          className="press w-full flex items-center gap-3 px-5 h-12 active:bg-[var(--color-cell-pressed)]">
+          <Folder size={18} strokeWidth={2.2} className="text-[var(--color-secondary)] shrink-0" />
+          <span className="flex-1 text-left text-[15px]">Unfiled</span>
+          {current == null && <Check size={18} strokeWidth={2.5} className="text-[var(--color-accent)]" />}
+        </button>
         {folders.map(f => (
-          <Row key={f.id} onClick={() => { onMove(item.id, f.id); onClose(); }} selected={current === f.id}
-            leading={<Folder size={18} strokeWidth={2.2} className="text-[var(--color-accent)]" />}>
-            {f.name}
-          </Row>
+          <button key={f.id} type="button" onClick={() => choose(f.id)}
+            className="press w-full flex items-center gap-3 px-5 h-12 border-t border-white/5 active:bg-[var(--color-cell-pressed)]">
+            <Folder size={18} strokeWidth={2.2} className="text-[var(--color-accent)] shrink-0" />
+            <span className="flex-1 text-left text-[15px] truncate">{f.name}</span>
+            {current === f.id && <Check size={18} strokeWidth={2.5} className="text-[var(--color-accent)]" />}
+          </button>
         ))}
-      </Group>
+      </div>
       {folders.length === 0 && (
-        <GroupFooter>No folders yet. Create one from the Saved screen, then move timers into it.</GroupFooter>
+        <div className="px-5 py-2.5 text-[12px] text-[var(--color-tertiary)] text-center border-t border-white/5">
+          No folders yet — create one from the Saved screen.
+        </div>
       )}
-    </Sheet>
+      <div className="border-t border-white/10">
+        <button type="button" onClick={onClose} className="press w-full h-11 text-[15px] text-[var(--color-accent)]">Cancel</button>
+      </div>
+    </CenterCard>
+  );
+}
+
+// A single saved-timer row (load · move · log · delete). Shared by the top-level
+// list and the per-folder page.
+function TimerRow({ item, onLoad, onMove, onLog, onRequestDelete }) {
+  return (
+    <div className="sep-row flex items-center min-h-[60px] pr-2">
+      <button type="button" onClick={() => onLoad(item)}
+        className="press flex-1 min-w-0 text-left flex items-center px-4 py-2.5 active:bg-[var(--color-cell-pressed)] rounded-l-lg">
+        <div className="flex-1 min-w-0">
+          <div className="text-[17px] text-white truncate">{item.name}</div>
+          <div className="text-[13px] text-[var(--color-secondary)] mt-0.5">{describeItem(item)}</div>
+        </div>
+        <ChevronRight size={16} strokeWidth={2} className="text-[var(--color-tertiary)] ml-3 shrink-0" />
+      </button>
+      <button type="button" onClick={() => onMove(item)} aria-label={`Move ${item.name}`}
+        className="press w-10 h-10 rounded-full text-[var(--color-secondary)] active:bg-[var(--color-cell-pressed)] flex items-center justify-center shrink-0 ml-1">
+        <FolderInput size={17} strokeWidth={2.2} />
+      </button>
+      <button type="button" onClick={() => onLog(item)} aria-label={`Log ${item.name}`}
+        className="press w-10 h-10 rounded-full text-[var(--color-accent)] active:bg-[var(--color-cell-pressed)] flex items-center justify-center shrink-0 ml-1">
+        <ClipboardList size={17} strokeWidth={2.2} />
+      </button>
+      <button type="button" onClick={() => onRequestDelete(item)} aria-label={`Delete ${item.name}`}
+        className="press w-10 h-10 rounded-full text-red-400 active:bg-red-500/10 flex items-center justify-center shrink-0 ml-1">
+        <Trash2 size={16} strokeWidth={2.2} />
+      </button>
+    </div>
   );
 }
 
 function LibraryView({ items, folders, folderHandlers, onClose, onLoad, onLog, onRequestDelete, footer }) {
+  const [openFolderId, setOpenFolderId] = useState(null); // null = top level
   const [createOpen, setCreateOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState(null); // folder | null
   const [deleteTarget, setDeleteTarget] = useState(null); // folder | null
   const [moveTarget, setMoveTarget] = useState(null);      // item | null
-  const [collapsed, setCollapsed] = useState({});          // folderId -> bool
 
-  const sections = groupLibraryByFolder(items, folders);
-  const toggle = (id) => setCollapsed(c => ({ ...c, [String(id)]: !c[String(id)] }));
+  // Open folder (null if none selected or it was just deleted).
+  const openFolder = openFolderId ? folders.find(f => f.id === openFolderId) || null : null;
+  const inFolder = !!openFolder;
 
-  return (
-    <div className="slideIn pb-8">
-      <NavBar title="Saved" leftLabel="Done" onLeft={onClose}
-        rightLabel="New folder" rightIcon={FolderPlus} onRight={() => setCreateOpen(true)} />
+  // Items in a folder vs. unfiled (also catches items pointing at a missing folder).
+  const itemsIn = (fid) => items.filter(i => (i.folderId ?? null) === fid);
+  const unfiledItems = items.filter(i => {
+    const fid = i.folderId ?? null;
+    return fid == null || !folders.some(f => f.id === fid);
+  });
 
-      {items.length === 0 && folders.length === 0 ? (
-        <div className="px-4 mt-12 text-center">
-          <Bookmark size={32} strokeWidth={2} className="mx-auto text-[var(--color-tertiary)]" />
-          <div className="text-[17px] font-semibold mt-4">Nothing saved yet</div>
-          <div className="text-[14px] text-[var(--color-secondary)] mt-1">When you build a session you like, tap Save to find it again here.</div>
-        </div>
-      ) : (
-        <>
-          {sections.map(section => {
-            // Hide an empty Unfiled bucket once folders exist (avoids a lonely
-            // "Unfiled · 0" header); always show real folders so they're targetable.
-            if (section.isUnfiled && section.items.length === 0 && folders.length > 0) return null;
-            const isCollapsed = !!collapsed[String(section.id)];
-            return (
-              <React.Fragment key={section.id ?? 'unfiled'}>
-                <div className="px-4 mt-6 mb-1.5 flex items-center gap-2">
-                  <button type="button" onClick={() => toggle(section.id)}
-                    className="press flex items-center gap-1.5 text-[13px] uppercase tracking-wide text-[var(--color-secondary)] min-w-0">
-                    {section.isUnfiled
-                      ? <Folder size={14} strokeWidth={2.2} className="shrink-0" />
-                      : <FolderOpen size={14} strokeWidth={2.2} className="shrink-0 text-[var(--color-accent)]" />}
-                    <span className="truncate">{section.name}</span>
-                    <span className="text-[var(--color-tertiary)]">{section.items.length}</span>
-                    {isCollapsed
-                      ? <ChevronRight size={14} strokeWidth={2.2} className="shrink-0" />
-                      : <ChevronDown size={14} strokeWidth={2.2} className="shrink-0" />}
-                  </button>
-                  <div className="flex-1" />
-                  {!section.isUnfiled && (
-                    <>
-                      <button type="button" onClick={() => setRenameTarget(section)}
-                        aria-label={`Rename ${section.name}`} className="press text-[13px] text-[var(--color-accent)] px-1">Rename</button>
-                      <button type="button" onClick={() => setDeleteTarget(section)}
-                        aria-label={`Delete ${section.name}`} className="press text-[13px] text-red-400 px-1">Delete</button>
-                    </>
-                  )}
-                </div>
-                {!isCollapsed && (section.items.length === 0 ? (
-                  <Group><div className="px-4 py-3 text-[13px] text-[var(--color-tertiary)]">Empty — move timers here with the folder button.</div></Group>
-                ) : (
-                  <Group>
-                    {section.items.map(item => (
-                      <div key={item.id} className="sep-row flex items-center min-h-[60px] pr-2">
-                        <button type="button" onClick={() => onLoad(item)}
-                          className="press flex-1 min-w-0 text-left flex items-center px-4 py-2.5 active:bg-[var(--color-cell-pressed)] rounded-l-lg">
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[17px] text-white truncate">{item.name}</div>
-                            <div className="text-[13px] text-[var(--color-secondary)] mt-0.5">{describeItem(item)}</div>
-                          </div>
-                          <ChevronRight size={16} strokeWidth={2} className="text-[var(--color-tertiary)] ml-3 shrink-0" />
-                        </button>
-                        <button type="button" onClick={() => setMoveTarget(item)} aria-label={`Move ${item.name}`}
-                          className="press w-10 h-10 rounded-full text-[var(--color-secondary)] active:bg-[var(--color-cell-pressed)] flex items-center justify-center shrink-0 ml-1">
-                          <FolderInput size={17} strokeWidth={2.2} />
-                        </button>
-                        <button type="button" onClick={() => onLog(item)} aria-label={`Log ${item.name}`}
-                          className="press w-10 h-10 rounded-full text-[var(--color-accent)] active:bg-[var(--color-cell-pressed)] flex items-center justify-center shrink-0 ml-1">
-                          <ClipboardList size={17} strokeWidth={2.2} />
-                        </button>
-                        <button type="button" onClick={() => onRequestDelete(item)} aria-label={`Delete ${item.name}`}
-                          className="press w-10 h-10 rounded-full text-red-400 active:bg-red-500/10 flex items-center justify-center shrink-0 ml-1">
-                          <Trash2 size={16} strokeWidth={2.2} />
-                        </button>
-                      </div>
-                    ))}
-                  </Group>
-                ))}
-              </React.Fragment>
-            );
-          })}
-          <GroupFooter>Tap a session to load it. Folder icon moves it; clipboard logs a result; trash deletes.</GroupFooter>
-        </>
-      )}
-      {footer}
+  const rowProps = { onLoad, onMove: setMoveTarget, onLog, onRequestDelete };
 
+  const dialogs = (
+    <>
       <FolderNameDialog
         open={createOpen}
         title="New folder"
@@ -1510,15 +1487,90 @@ function LibraryView({ items, folders, folderHandlers, onClose, onLoad, onLog, o
         title="Delete this folder?"
         body={<><span className="text-white">{deleteTarget?.name}</span> will be removed. Its timers move back to Unfiled — nothing is deleted.</>}
         onClose={() => setDeleteTarget(null)}
-        onConfirm={() => { folderHandlers.onDelete(deleteTarget.id); setDeleteTarget(null); }}
+        onConfirm={() => { folderHandlers.onDelete(deleteTarget.id); setDeleteTarget(null); setOpenFolderId(null); }}
       />
-      <MoveToFolderSheet
+      <MoveToFolderDialog
         open={!!moveTarget}
         item={moveTarget}
         folders={folders}
         onClose={() => setMoveTarget(null)}
         onMove={folderHandlers.onMoveItem}
       />
+    </>
+  );
+
+  // --- per-folder page ------------------------------------------------------
+  if (inFolder) {
+    const folderItems = itemsIn(openFolder.id);
+    return (
+      <div className="slideIn pb-8">
+        <NavBar title={openFolder.name} leftLabel="Saved" onLeft={() => setOpenFolderId(null)} />
+        <div className="px-4 mt-2 flex items-center justify-end gap-3">
+          <button type="button" onClick={() => setRenameTarget(openFolder)} className="press text-[14px] text-[var(--color-accent)] px-1">Rename</button>
+          <button type="button" onClick={() => setDeleteTarget(openFolder)} className="press text-[14px] text-red-400 px-1">Delete</button>
+        </div>
+        {folderItems.length === 0 ? (
+          <div className="px-4 mt-12 text-center">
+            <FolderOpen size={32} strokeWidth={2} className="mx-auto text-[var(--color-tertiary)]" />
+            <div className="text-[17px] font-semibold mt-4">Empty folder</div>
+            <div className="text-[14px] text-[var(--color-secondary)] mt-1">Move timers here with the folder button on any saved session.</div>
+          </div>
+        ) : (
+          <>
+            <GroupHeader>{folderItems.length} session{folderItems.length > 1 ? 's' : ''}</GroupHeader>
+            <Group>
+              {folderItems.map(item => <TimerRow key={item.id} item={item} {...rowProps} />)}
+            </Group>
+          </>
+        )}
+        {dialogs}
+      </div>
+    );
+  }
+
+  // --- top level ------------------------------------------------------------
+  return (
+    <div className="slideIn pb-8">
+      <NavBar title="Saved" leftLabel="Done" onLeft={onClose}
+        rightLabel="New folder" rightIcon={FolderPlus} onRight={() => setCreateOpen(true)} />
+
+      {items.length === 0 && folders.length === 0 ? (
+        <div className="px-4 mt-12 text-center">
+          <Bookmark size={32} strokeWidth={2} className="mx-auto text-[var(--color-tertiary)]" />
+          <div className="text-[17px] font-semibold mt-4">Nothing saved yet</div>
+          <div className="text-[14px] text-[var(--color-secondary)] mt-1">When you build a session you like, tap Save to find it again here.</div>
+        </div>
+      ) : (
+        <>
+          {folders.length > 0 && (
+            <>
+              <GroupHeader>Folders</GroupHeader>
+              <Group>
+                {folders.map(f => (
+                  <Row key={f.id} onClick={() => setOpenFolderId(f.id)}
+                    leading={<Folder size={18} strokeWidth={2.2} className="text-[var(--color-accent)]" />}
+                    subtitle={`${itemsIn(f.id).length} session${itemsIn(f.id).length === 1 ? '' : 's'}`}>
+                    {f.name}
+                  </Row>
+                ))}
+              </Group>
+            </>
+          )}
+
+          {unfiledItems.length > 0 && (
+            <>
+              <GroupHeader>{folders.length > 0 ? 'Unfiled' : `${unfiledItems.length} session${unfiledItems.length > 1 ? 's' : ''}`}</GroupHeader>
+              <Group>
+                {unfiledItems.map(item => <TimerRow key={item.id} item={item} {...rowProps} />)}
+              </Group>
+            </>
+          )}
+
+          <GroupFooter>Tap a folder to open it, or a session to load it. Folder icon moves a session; clipboard logs a result; trash deletes.</GroupFooter>
+        </>
+      )}
+      {footer}
+      {dialogs}
     </div>
   );
 }
