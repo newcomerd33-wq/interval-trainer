@@ -13,6 +13,7 @@
 
 export const KEYS = {
   library: 'interval-trainer-library-v1',
+  folders: 'interval-trainer-folders-v1',
   exercises: 'interval-trainer-exercises-v1',
   journal: 'interval-trainer-journal-v1',
   schedule: 'interval-trainer-schedule-v1',
@@ -25,6 +26,7 @@ export const KEYS = {
 // are arrays.
 export const EMPTY = {
   library: () => [],
+  folders: () => [],
   exercises: () => [],
   journal: () => [],
   schedule: () => ({ rules: [], oneOffs: [], exceptions: [] }),
@@ -55,6 +57,9 @@ export function saveStore(key, value) {
 export const loadLibrary = () => loadStore(KEYS.library, EMPTY.library());
 export const saveLibrary = (v) => saveStore(KEYS.library, v);
 
+export const loadFolders = () => loadStore(KEYS.folders, EMPTY.folders());
+export const saveFolders = (v) => saveStore(KEYS.folders, v);
+
 export const loadExercises = () => loadStore(KEYS.exercises, EMPTY.exercises());
 export const saveExercises = (v) => saveStore(KEYS.exercises, v);
 
@@ -77,15 +82,19 @@ export function clearActiveLog() {
 
 // --- unified backup (pure) ---------------------------------------------------
 
-export const BACKUP_VERSION = 1;
+// v2 adds the `folders` store. A v1 backup (no folders) still imports cleanly —
+// parseBackup defaults it to []. Bumping means an OLDER app build will refuse a
+// v2 backup ("newer version"), which is the correct, safe direction.
+export const BACKUP_VERSION = 2;
 
 // Assemble a backup object from in-memory stores. Pure — caller supplies data.
-export function buildBackup({ library, exercises, journal, schedule }, exportedAt = Date.now()) {
+export function buildBackup({ library, folders, exercises, journal, schedule }, exportedAt = Date.now()) {
   return {
     app: 'interval-trainer',
     version: BACKUP_VERSION,
     exportedAt,
     library: library || EMPTY.library(),
+    folders: folders || EMPTY.folders(),
     exercises: exercises || EMPTY.exercises(),
     journal: journal || EMPTY.journal(),
     schedule: schedule || EMPTY.schedule(),
@@ -104,6 +113,7 @@ export function parseBackup(obj) {
     version: obj.version,
     exportedAt: obj.exportedAt || null,
     library: Array.isArray(obj.library) ? obj.library : EMPTY.library(),
+    folders: Array.isArray(obj.folders) ? obj.folders : EMPTY.folders(),
     exercises: Array.isArray(obj.exercises) ? obj.exercises : EMPTY.exercises(),
     journal: Array.isArray(obj.journal) ? obj.journal : EMPTY.journal(),
     schedule: {
@@ -119,6 +129,7 @@ export function parseBackup(obj) {
 export function exportAll() {
   return buildBackup({
     library: loadLibrary(),
+    folders: loadFolders(),
     exercises: loadExercises(),
     journal: loadJournal(),
     schedule: loadSchedule(),
@@ -131,6 +142,7 @@ export function exportAll() {
 export function importAll(backup) {
   const b = parseBackup(backup);
   saveLibrary(b.library);
+  saveFolders(b.folders);
   saveExercises(b.exercises);
   saveJournal(b.journal);
   saveSchedule(b.schedule);

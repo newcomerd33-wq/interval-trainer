@@ -15,6 +15,27 @@ export const METRIC_KINDS = ['weight_reps', 'reps_only', 'time', 'distance_time'
 export const DEFAULT_METRIC_KIND = 'weight_reps';
 export const DEFAULT_UNIT = 'lb';
 
+// Human labels for each metric kind. Shared by the custom builder (pre-config),
+// the log editor, and the in-timer recording-type picker so they never drift.
+export const METRIC_LABEL = {
+  weight_reps: 'Weight × reps',
+  reps_only: 'Reps only',
+  time: 'Time',
+  distance_time: 'Distance + time',
+  bands: 'Bands',
+  freeform: 'Freeform',
+};
+
+// Short labels for tight UI (chips/inline pickers).
+export const METRIC_LABEL_SHORT = {
+  weight_reps: 'Wt × reps',
+  reps_only: 'Reps',
+  time: 'Time',
+  distance_time: 'Dist + time',
+  bands: 'Bands',
+  freeform: 'Free',
+};
+
 // Matching key: trim, collapse internal whitespace, lowercase. Display name is
 // preserved separately — this is only for dedup/lookup.
 export function normalizeExerciseName(name) {

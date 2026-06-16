@@ -29,20 +29,28 @@ function richerMode(a, b) {
 }
 
 // Ordered group keyed by normalized name; preserves first-seen display name.
+// `metricKind` (optional) is the recording type configured on the source slot;
+// the FIRST non-null one seen for a name wins (a name appears under one type per
+// session). null/undefined means "unspecified" — the seed falls back to history
+// or catalog default downstream.
 function createGroup() {
   const order = [];
   const byKey = new Map();
   return {
-    add(name, mode, sets) {
+    add(name, mode, sets, metricKind) {
       const key = normalizeExerciseName(name);
       if (!key) return; // skip empty / whitespace-only names
       let entry = byKey.get(key);
       if (!entry) {
         entry = { name: String(name).trim(), mode, setCount: 0 };
+        // Only attach metricKind when the source actually configured one, so the
+        // derived shape stays minimal for preset/rotation/legacy custom timers.
+        if (metricKind) entry.metricKind = metricKind;
         byKey.set(key, entry);
         order.push(entry);
       } else {
         entry.mode = richerMode(entry.mode, mode);
+        if (!entry.metricKind && metricKind) entry.metricKind = metricKind;
       }
       entry.setCount += sets;
     },
@@ -77,7 +85,7 @@ export function expandSetsFromSlots(slots) {
   const g = createGroup();
   for (const slot of slots || []) {
     if (!isWorkingSlot(slot)) continue;
-    g.add(slot.name, modeForSlot(slot), countsAsSet(slot) ? 1 : 0);
+    g.add(slot.name, modeForSlot(slot), countsAsSet(slot) ? 1 : 0, slot.metricKind);
   }
   return g.result();
 }
@@ -94,7 +102,8 @@ export function exercisesForItem(item) {
     for (const circuit of item.custom.circuits || []) {
       const rounds = circuit.rounds || 1; // each round through the circuit is one set
       for (const ex of circuit.exercises || []) {
-        g.add(ex.name, ex.mode === 'unilateral' ? 'unilateral' : 'standard', rounds);
+        if (ex.kind === 'rest') continue; // rest = recovery, never logged
+        g.add(ex.name, ex.mode === 'unilateral' ? 'unilateral' : 'standard', rounds, ex.metricKind);
       }
     }
     return g.result();

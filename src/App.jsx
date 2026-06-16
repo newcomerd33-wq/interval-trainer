@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
-  ChevronRight, ChevronLeft, Check, Play, Pause, RotateCcw, SkipForward,
+  ChevronRight, ChevronLeft, ChevronDown, Check, Play, Pause, RotateCcw, SkipForward,
   Volume2, VolumeX, Plus, Minus, X, Sliders, Bookmark, Trash2, Repeat, ClipboardList,
+  Folder, FolderPlus, FolderOpen, FolderInput, Pencil,
 } from 'lucide-react';
-import { NavBar, Group, GroupHeader, GroupFooter, Row, CenterCard, ConfirmDeleteDialog } from './views/ui.jsx';
+import { NavBar, Group, GroupHeader, GroupFooter, Row, CenterCard, ConfirmDeleteDialog, Sheet } from './views/ui.jsx';
 import { TabBar } from './views/TabBar.jsx';
 import { HistoryView } from './views/HistoryView.jsx';
 import { LogEditorView } from './views/LogEditorView.jsx';
@@ -12,10 +13,11 @@ import { ReviewLog } from './views/ReviewLog.jsx';
 import { CalendarView } from './views/CalendarView.jsx';
 import { TodayStrip } from './views/TodayStrip.jsx';
 import { addRule, removeRule, addOneOff, removeOneOff, setOneOffStatus, addException, occurrencesInRange, scheduledDoneKeys } from './schedule.js';
-import { loadLibrary, saveLibrary, loadJournal, saveJournal, loadExercises, saveExercises, loadSchedule, saveSchedule, buildBackup, loadActiveLog, saveActiveLog, clearActiveLog } from './storage.js';
+import { loadLibrary, saveLibrary, loadFolders, saveFolders, loadJournal, saveJournal, loadExercises, saveExercises, loadSchedule, saveSchedule, buildBackup, loadActiveLog, saveActiveLog, clearActiveLog } from './storage.js';
+import { addFolder, renameFolder, removeFolder, moveItemToFolder, unfileItems, groupLibraryByFolder } from './folders.js';
 import { exercisesForItem, expandSetsFromSlots } from './exercises.js';
-import { ensureExercise, findExercise, normalizeExerciseName } from './catalog.js';
-import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt, suggestionsForExercise, recentSessionsForExercise, lastExerciseLogged, emptySet, fieldsForMetric, pruneEntry, hasLoggedContent, isLoggedSet, cascadeField, isSetComplete, formatSetGroups, coerceSet, ALL_SET_FIELDS, SET_TEXT_FIELDS } from './journal.js';
+import { ensureExercise, findExercise, normalizeExerciseName, METRIC_KINDS, METRIC_LABEL, METRIC_LABEL_SHORT, DEFAULT_METRIC_KIND } from './catalog.js';
+import { createEntry, seedExercisesForLog, upsertEntry, removeEntry, withUpdatedAt, suggestionsForExercise, recentSessionsForExercise, lastExerciseLogged, emptySet, emptyExercise, fieldsForMetric, pruneEntry, hasLoggedContent, isLoggedSet, cascadeField, isSetComplete, formatSetGroups, coerceSet, ALL_SET_FIELDS, SET_TEXT_FIELDS } from './journal.js';
 import { todayKey, addDays } from './date.js';
 
 // Boxing bell samples (Vite resolves these to hashed URLs at build time)
@@ -167,10 +169,23 @@ function buildCustomSession(custom) {
   custom.circuits.forEach((circuit, ci) => {
     for (let r = 1; r <= circuit.rounds; r++) {
       for (const ex of circuit.exercises) {
+        // Intra-circuit rest: a recovery slot between exercises, repeated each
+        // round. isRest makes it non-recording everywhere (logger/counter/audio).
+        if (isRestItem(ex)) {
+          slots.push({
+            name: 'Rest',
+            duration: ex.duration,
+            isRest: true,
+            meta: { circuit: ci + 1, totalCircuits: custom.circuits.length, round: r, totalRoundsInCircuit: circuit.rounds, isRest: true },
+          });
+          totalDurationSec += ex.duration;
+          continue;
+        }
         slots.push({
           name: ex.name,
           duration: ex.duration,
           unilateral: ex.mode === 'unilateral',
+          metricKind: ex.metricKind || DEFAULT_METRIC_KIND,
           meta: { circuit: ci + 1, totalCircuits: custom.circuits.length, round: r, totalRoundsInCircuit: circuit.rounds },
         });
         totalSets++;
@@ -873,11 +888,46 @@ function ConfigureView({ config, blocks, setBlocks, onBack, onStart, onSave }) {
 // =============================================================================
 // CUSTOM BUILDER
 // =============================================================================
-function newExercise(n = 1) { return { id: uid(), name: `Exercise ${n}`, duration: 60, mode: 'standard' }; }
+function newExercise(n = 1) { return { id: uid(), kind: 'exercise', name: `Exercise ${n}`, duration: 60, mode: 'standard', metricKind: DEFAULT_METRIC_KIND }; }
+function newRest() { return { id: uid(), kind: 'rest', duration: 60 }; }
+const isRestItem = (it) => it && it.kind === 'rest';
 function newCircuit(startN = 1) { return { id: uid(), rounds: 4, restAfterSec: 180, exercises: [newExercise(startN), newExercise(startN + 1)] }; }
 function emptyCustom() { return { circuits: [{ ...newCircuit(1), restAfterSec: 0 }] }; }
 
+function MoveDeleteControls({ idx, total, onMoveUp, onMoveDown, onDelete }) {
+  return (
+    <>
+      <div className="flex flex-col gap-1 shrink-0">
+        <button type="button" onClick={onMoveUp} disabled={idx === 0}
+          className="press w-7 h-6 rounded-md bg-[var(--color-cell-pressed)] text-[var(--color-secondary)] disabled:opacity-25 flex items-center justify-center">
+          <ChevronLeft size={12} strokeWidth={2.5} style={{ transform: 'rotate(90deg)' }} />
+        </button>
+        <button type="button" onClick={onMoveDown} disabled={idx === total - 1}
+          className="press w-7 h-6 rounded-md bg-[var(--color-cell-pressed)] text-[var(--color-secondary)] disabled:opacity-25 flex items-center justify-center">
+          <ChevronLeft size={12} strokeWidth={2.5} style={{ transform: 'rotate(-90deg)' }} />
+        </button>
+      </div>
+      <button type="button" onClick={onDelete} className="press w-7 h-7 rounded-md text-red-400 hover:bg-red-500/10 flex items-center justify-center shrink-0 ml-1" aria-label="Delete">
+        <Trash2 size={14} strokeWidth={2.2} />
+      </button>
+    </>
+  );
+}
+
 function CustomExerciseRow({ exercise, idx, totalInCircuit, onChange, onDelete, onMoveUp, onMoveDown }) {
+  // Rest items carry no name/mode/recording — just a duration to recover.
+  if (isRestItem(exercise)) {
+    return (
+      <div className="sep-row flex items-center min-h-[56px] px-4 py-2.5 gap-2 bg-[var(--color-cell-pressed)]/30">
+        <div className="flex-1 min-w-0 flex items-center gap-2.5">
+          <div className="text-[15px] font-medium text-[var(--color-alt)] w-12 shrink-0">Rest</div>
+          <Stepper value={exercise.duration} min={5} max={600} step={5} onChange={d => onChange({ ...exercise, duration: d })} />
+          <span className="text-[12px] text-[var(--color-tertiary)]">no logging</span>
+        </div>
+        <MoveDeleteControls idx={idx} total={totalInCircuit} onMoveUp={onMoveUp} onMoveDown={onMoveDown} onDelete={onDelete} />
+      </div>
+    );
+  }
   return (
     <div className="sep-row flex items-center min-h-[64px] px-4 py-2.5 gap-2">
       <div className="flex-1 min-w-0">
@@ -889,7 +939,7 @@ function CustomExerciseRow({ exercise, idx, totalInCircuit, onChange, onDelete, 
           placeholder="Exercise name"
           className="w-full bg-transparent text-[17px] text-white placeholder:text-[var(--color-tertiary)] focus:outline-none"
         />
-        <div className="mt-1 flex items-center gap-2">
+        <div className="mt-1 flex items-center gap-2 flex-wrap">
           <Stepper value={exercise.duration} min={5} max={600} step={5} onChange={d => onChange({ ...exercise, duration: d })} />
           <button type="button"
             onClick={() => onChange({ ...exercise, mode: exercise.mode === 'unilateral' ? 'standard' : 'unilateral' })}
@@ -900,21 +950,17 @@ function CustomExerciseRow({ exercise, idx, totalInCircuit, onChange, onDelete, 
             }`}>
             {exercise.mode === 'unilateral' ? 'Unilateral' : 'Standard'}
           </button>
+          <select
+            value={exercise.metricKind || DEFAULT_METRIC_KIND}
+            onChange={e => onChange({ ...exercise, metricKind: e.target.value })}
+            aria-label="Recording type"
+            className="press rounded-md px-2 py-1.5 text-[12px] font-medium bg-[var(--color-cell-pressed)] text-[var(--color-secondary)] focus:outline-none"
+          >
+            {METRIC_KINDS.map(k => <option key={k} value={k}>{METRIC_LABEL_SHORT[k]}</option>)}
+          </select>
         </div>
       </div>
-      <div className="flex flex-col gap-1 shrink-0">
-        <button type="button" onClick={onMoveUp} disabled={idx === 0}
-          className="press w-7 h-6 rounded-md bg-[var(--color-cell-pressed)] text-[var(--color-secondary)] disabled:opacity-25 flex items-center justify-center">
-          <ChevronLeft size={12} strokeWidth={2.5} style={{ transform: 'rotate(90deg)' }} />
-        </button>
-        <button type="button" onClick={onMoveDown} disabled={idx === totalInCircuit - 1}
-          className="press w-7 h-6 rounded-md bg-[var(--color-cell-pressed)] text-[var(--color-secondary)] disabled:opacity-25 flex items-center justify-center">
-          <ChevronLeft size={12} strokeWidth={2.5} style={{ transform: 'rotate(-90deg)' }} />
-        </button>
-      </div>
-      <button type="button" onClick={onDelete} className="press w-7 h-7 rounded-md text-red-400 hover:bg-red-500/10 flex items-center justify-center shrink-0 ml-1" aria-label="Delete">
-        <Trash2 size={14} strokeWidth={2.2} />
-      </button>
+      <MoveDeleteControls idx={idx} total={totalInCircuit} onMoveUp={onMoveUp} onMoveDown={onMoveDown} onDelete={onDelete} />
     </div>
   );
 }
@@ -927,8 +973,12 @@ function CustomBuilderView({ session, setSession, onBack, onStart, onSave }) {
     updateCircuit(ci, { exercises: session.circuits[ci].exercises.map((e, i) => i === ei ? next : e) });
   };
   const addExercise = (ci) => {
-    const n = session.circuits.reduce((acc, c) => acc + c.exercises.length, 0) + 1;
+    // Number new exercises off the count of real exercises (ignore rests).
+    const n = session.circuits.reduce((acc, c) => acc + c.exercises.filter((e) => !isRestItem(e)).length, 0) + 1;
     updateCircuit(ci, { exercises: [...session.circuits[ci].exercises, newExercise(n)] });
+  };
+  const addRest = (ci) => {
+    updateCircuit(ci, { exercises: [...session.circuits[ci].exercises, newRest()] });
   };
   const deleteExercise = (ci, ei) => {
     if (session.circuits[ci].exercises.length === 1) return;
@@ -951,8 +1001,11 @@ function CustomBuilderView({ session, setSession, onBack, onStart, onSave }) {
   };
 
   const built = buildCustomSession(session);
-  const totalEx = session.circuits.reduce((acc, c) => acc + c.exercises.length, 0);
-  const canStart = totalEx > 0 && session.circuits.every(c => c.exercises.length > 0 && c.exercises.every(e => e.duration > 0));
+  // A session needs at least one real (non-rest) exercise; every item needs a
+  // positive duration. Rest-only circuits are allowed as long as some circuit
+  // has a real exercise.
+  const realExCount = session.circuits.reduce((acc, c) => acc + c.exercises.filter((e) => !isRestItem(e)).length, 0);
+  const canStart = realExCount > 0 && session.circuits.every(c => c.exercises.length > 0 && c.exercises.every(e => e.duration > 0));
 
   return (
     <div className="slideIn pb-8">
@@ -997,9 +1050,16 @@ function CustomBuilderView({ session, setSession, onBack, onStart, onSave }) {
                 onMoveDown={() => moveExercise(ci, ei, 1)}
               />
             ))}
-            <Row onClick={() => addExercise(ci)} leading={<Plus size={18} strokeWidth={2.4} className="text-[var(--color-accent)]" />}>
-              <span className="text-[var(--color-accent)]">Add exercise</span>
-            </Row>
+            <div className="sep-row flex divide-x divide-[var(--color-sep)]">
+              <button type="button" onClick={() => addExercise(ci)}
+                className="press flex-1 flex items-center justify-center gap-1.5 h-11 text-[15px] text-[var(--color-accent)] active:bg-[var(--color-cell-pressed)]">
+                <Plus size={16} strokeWidth={2.5} /> Add exercise
+              </button>
+              <button type="button" onClick={() => addRest(ci)}
+                className="press flex-1 flex items-center justify-center gap-1.5 h-11 text-[15px] text-[var(--color-alt)] active:bg-[var(--color-cell-pressed)]">
+                <Plus size={16} strokeWidth={2.5} /> Add rest
+              </button>
+            </div>
           </Group>
 
           <Group className="mt-2">
@@ -1258,12 +1318,105 @@ function RotationBuilderView({ rotation, setRotation, onBack, onStart, onSave })
 // =============================================================================
 // LIBRARY VIEW
 // =============================================================================
-function LibraryView({ items, onClose, onLoad, onLog, onRequestDelete, footer }) {
+// One-line summary for a saved item, read from its stored payload.
+function describeItem(item) {
+  if (item.sourceType === 'preset') {
+    const cfg = CONFIG_BY_ID[item.configId];
+    if (!cfg) return 'Preset config (unavailable)';
+    const isAsym = cfg.style === 'asymmetric';
+    return `${cfg.duration} min · ${isAsym ? `${cfg.intervalSec}+${cfg.extendedSec}s` : `${cfg.intervalSec}s`} · ${cfg.totalEx} ex · ${cfg.sets} sets each`;
+  }
+  if (item.sourceType === 'rotation') {
+    const r = item.rotation;
+    const accN = r.accessories.length;
+    const totalSlots = r.rounds * 2 * accN;
+    const totalMin = Math.round((totalSlots * r.intervalSec) / 60);
+    return `Rotation · ${totalMin} min · ${r.intervalSec}s · primary + ${accN} accessor${accN === 1 ? 'y' : 'ies'} × ${r.rounds} rounds`;
+  }
+  const built = buildCustomSession(item.custom);
+  return `Custom · ${built.durationMin} min · ${built.totalSets} sets · ${item.custom.circuits.length} circuit${item.custom.circuits.length > 1 ? 's' : ''}`;
+}
+
+// Small text-input dialog (folder create / rename). Mirrors SaveDialog's focus
+// behavior so the iOS keyboard animation doesn't fight the field.
+function FolderNameDialog({ open, title, defaultName, confirmLabel = 'Save', onClose, onSubmit }) {
+  const [name, setName] = useState('');
+  const inputRef = useRef(null);
+  useEffect(() => { if (open) setName(defaultName || ''); }, [open, defaultName]);
+  useEffect(() => {
+    if (!open) return;
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus(); el.select();
+    const t = setTimeout(() => el.scrollIntoView({ block: 'center', behavior: 'auto' }), 50);
+    return () => clearTimeout(t);
+  }, [open]);
+  if (!open) return null;
+  const submit = () => { if (name.trim()) { onSubmit(name.trim()); onClose(); } };
+  return (
+    <CenterCard open={open} onClose={onClose}>
+      <div className="p-5 text-center">
+        <div className="text-[17px] font-semibold">{title}</div>
+        <input
+          ref={inputRef}
+          type="text"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+          placeholder="Folder name"
+          className="mt-4 w-full bg-[var(--color-cell)] rounded-lg px-3 py-2.5 text-[15px] text-white text-center placeholder:text-[var(--color-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/50"
+        />
+      </div>
+      <div className="flex border-t border-white/10">
+        <button type="button" onClick={onClose} className="press flex-1 h-11 text-[15px] text-[var(--color-accent)]">Cancel</button>
+        <div className="w-px bg-white/10" />
+        <button type="button" onClick={submit} disabled={!name.trim()} className="press flex-1 h-11 text-[15px] font-semibold text-[var(--color-accent)] disabled:opacity-30">{confirmLabel}</button>
+      </div>
+    </CenterCard>
+  );
+}
+
+// Pick a destination folder for an item (or Unfiled). Current folder is checked.
+function MoveToFolderSheet({ open, item, folders, onClose, onMove }) {
+  if (!item) return null;
+  const current = item.folderId ?? null;
+  return (
+    <Sheet open={open} onClose={onClose} title="Move to folder" primaryLabel="Done" onPrimary={onClose}>
+      <Group>
+        <Row onClick={() => { onMove(item.id, null); onClose(); }} selected={current == null}
+          leading={<Folder size={18} strokeWidth={2.2} className="text-[var(--color-secondary)]" />}>
+          Unfiled
+        </Row>
+        {folders.map(f => (
+          <Row key={f.id} onClick={() => { onMove(item.id, f.id); onClose(); }} selected={current === f.id}
+            leading={<Folder size={18} strokeWidth={2.2} className="text-[var(--color-accent)]" />}>
+            {f.name}
+          </Row>
+        ))}
+      </Group>
+      {folders.length === 0 && (
+        <GroupFooter>No folders yet. Create one from the Saved screen, then move timers into it.</GroupFooter>
+      )}
+    </Sheet>
+  );
+}
+
+function LibraryView({ items, folders, folderHandlers, onClose, onLoad, onLog, onRequestDelete, footer }) {
+  const [createOpen, setCreateOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState(null); // folder | null
+  const [deleteTarget, setDeleteTarget] = useState(null); // folder | null
+  const [moveTarget, setMoveTarget] = useState(null);      // item | null
+  const [collapsed, setCollapsed] = useState({});          // folderId -> bool
+
+  const sections = groupLibraryByFolder(items, folders);
+  const toggle = (id) => setCollapsed(c => ({ ...c, [String(id)]: !c[String(id)] }));
+
   return (
     <div className="slideIn pb-8">
-      <NavBar title="Saved" leftLabel="Done" onLeft={onClose} />
+      <NavBar title="Saved" leftLabel="Done" onLeft={onClose}
+        rightLabel="New folder" rightIcon={FolderPlus} onRight={() => setCreateOpen(true)} />
 
-      {items.length === 0 ? (
+      {items.length === 0 && folders.length === 0 ? (
         <div className="px-4 mt-12 text-center">
           <Bookmark size={32} strokeWidth={2} className="mx-auto text-[var(--color-tertiary)]" />
           <div className="text-[17px] font-semibold mt-4">Nothing saved yet</div>
@@ -1271,66 +1424,101 @@ function LibraryView({ items, onClose, onLoad, onLog, onRequestDelete, footer })
         </div>
       ) : (
         <>
-          <GroupHeader>{items.length} session{items.length > 1 ? 's' : ''}</GroupHeader>
-          <Group>
-            {items.map(item => {
-              let sub = '';
-              if (item.sourceType === 'preset') {
-                const cfg = CONFIG_BY_ID[item.configId];
-                if (cfg) {
-                  const isAsym = cfg.style === 'asymmetric';
-                  sub = `${cfg.duration} min · ${isAsym ? `${cfg.intervalSec}+${cfg.extendedSec}s` : `${cfg.intervalSec}s`} · ${cfg.totalEx} ex · ${cfg.sets} sets each`;
-                } else {
-                  sub = 'Preset config (unavailable)';
-                }
-              } else if (item.sourceType === 'rotation') {
-                const r = item.rotation;
-                const accN = r.accessories.length;
-                const slotsPerSeq = 2 * accN;
-                const totalSlots = r.rounds * slotsPerSeq;
-                const totalMin = Math.round((totalSlots * r.intervalSec) / 60);
-                sub = `Rotation · ${totalMin} min · ${r.intervalSec}s · primary + ${accN} accessor${accN === 1 ? 'y' : 'ies'} × ${r.rounds} rounds`;
-              } else {
-                const built = buildCustomSession(item.custom);
-                sub = `Custom · ${built.durationMin} min · ${built.totalSets} sets · ${item.custom.circuits.length} circuit${item.custom.circuits.length > 1 ? 's' : ''}`;
-              }
-              return (
-                <div key={item.id} className="sep-row flex items-center min-h-[60px] pr-2">
-                  <button
-                    type="button"
-                    onClick={() => onLoad(item)}
-                    className="press flex-1 min-w-0 text-left flex items-center px-4 py-2.5 active:bg-[var(--color-cell-pressed)] rounded-l-lg"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[17px] text-white">{item.name}</div>
-                      <div className="text-[13px] text-[var(--color-secondary)] mt-0.5">{sub}</div>
-                    </div>
-                    <ChevronRight size={16} strokeWidth={2} className="text-[var(--color-tertiary)] ml-3 shrink-0" />
+          {sections.map(section => {
+            // Hide an empty Unfiled bucket once folders exist (avoids a lonely
+            // "Unfiled · 0" header); always show real folders so they're targetable.
+            if (section.isUnfiled && section.items.length === 0 && folders.length > 0) return null;
+            const isCollapsed = !!collapsed[String(section.id)];
+            return (
+              <React.Fragment key={section.id ?? 'unfiled'}>
+                <div className="px-4 mt-6 mb-1.5 flex items-center gap-2">
+                  <button type="button" onClick={() => toggle(section.id)}
+                    className="press flex items-center gap-1.5 text-[13px] uppercase tracking-wide text-[var(--color-secondary)] min-w-0">
+                    {section.isUnfiled
+                      ? <Folder size={14} strokeWidth={2.2} className="shrink-0" />
+                      : <FolderOpen size={14} strokeWidth={2.2} className="shrink-0 text-[var(--color-accent)]" />}
+                    <span className="truncate">{section.name}</span>
+                    <span className="text-[var(--color-tertiary)]">{section.items.length}</span>
+                    {isCollapsed
+                      ? <ChevronRight size={14} strokeWidth={2.2} className="shrink-0" />
+                      : <ChevronDown size={14} strokeWidth={2.2} className="shrink-0" />}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => onLog(item)}
-                    aria-label={`Log ${item.name}`}
-                    className="press w-10 h-10 rounded-full text-[var(--color-accent)] active:bg-[var(--color-cell-pressed)] flex items-center justify-center shrink-0 ml-1"
-                  >
-                    <ClipboardList size={17} strokeWidth={2.2} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onRequestDelete(item)}
-                    aria-label={`Delete ${item.name}`}
-                    className="press w-10 h-10 rounded-full text-red-400 active:bg-red-500/10 flex items-center justify-center shrink-0 ml-1"
-                  >
-                    <Trash2 size={16} strokeWidth={2.2} />
-                  </button>
+                  <div className="flex-1" />
+                  {!section.isUnfiled && (
+                    <>
+                      <button type="button" onClick={() => setRenameTarget(section)}
+                        aria-label={`Rename ${section.name}`} className="press text-[13px] text-[var(--color-accent)] px-1">Rename</button>
+                      <button type="button" onClick={() => setDeleteTarget(section)}
+                        aria-label={`Delete ${section.name}`} className="press text-[13px] text-red-400 px-1">Delete</button>
+                    </>
+                  )}
                 </div>
-              );
-            })}
-          </Group>
-          <GroupFooter>Tap a session to load it. Clipboard logs a result; trash deletes.</GroupFooter>
+                {!isCollapsed && (section.items.length === 0 ? (
+                  <Group><div className="px-4 py-3 text-[13px] text-[var(--color-tertiary)]">Empty — move timers here with the folder button.</div></Group>
+                ) : (
+                  <Group>
+                    {section.items.map(item => (
+                      <div key={item.id} className="sep-row flex items-center min-h-[60px] pr-2">
+                        <button type="button" onClick={() => onLoad(item)}
+                          className="press flex-1 min-w-0 text-left flex items-center px-4 py-2.5 active:bg-[var(--color-cell-pressed)] rounded-l-lg">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[17px] text-white truncate">{item.name}</div>
+                            <div className="text-[13px] text-[var(--color-secondary)] mt-0.5">{describeItem(item)}</div>
+                          </div>
+                          <ChevronRight size={16} strokeWidth={2} className="text-[var(--color-tertiary)] ml-3 shrink-0" />
+                        </button>
+                        <button type="button" onClick={() => setMoveTarget(item)} aria-label={`Move ${item.name}`}
+                          className="press w-10 h-10 rounded-full text-[var(--color-secondary)] active:bg-[var(--color-cell-pressed)] flex items-center justify-center shrink-0 ml-1">
+                          <FolderInput size={17} strokeWidth={2.2} />
+                        </button>
+                        <button type="button" onClick={() => onLog(item)} aria-label={`Log ${item.name}`}
+                          className="press w-10 h-10 rounded-full text-[var(--color-accent)] active:bg-[var(--color-cell-pressed)] flex items-center justify-center shrink-0 ml-1">
+                          <ClipboardList size={17} strokeWidth={2.2} />
+                        </button>
+                        <button type="button" onClick={() => onRequestDelete(item)} aria-label={`Delete ${item.name}`}
+                          className="press w-10 h-10 rounded-full text-red-400 active:bg-red-500/10 flex items-center justify-center shrink-0 ml-1">
+                          <Trash2 size={16} strokeWidth={2.2} />
+                        </button>
+                      </div>
+                    ))}
+                  </Group>
+                ))}
+              </React.Fragment>
+            );
+          })}
+          <GroupFooter>Tap a session to load it. Folder icon moves it; clipboard logs a result; trash deletes.</GroupFooter>
         </>
       )}
       {footer}
+
+      <FolderNameDialog
+        open={createOpen}
+        title="New folder"
+        confirmLabel="Create"
+        onClose={() => setCreateOpen(false)}
+        onSubmit={(name) => folderHandlers.onCreate(name)}
+      />
+      <FolderNameDialog
+        open={!!renameTarget}
+        title="Rename folder"
+        defaultName={renameTarget?.name}
+        onClose={() => setRenameTarget(null)}
+        onSubmit={(name) => folderHandlers.onRename(renameTarget.id, name)}
+      />
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        title="Delete this folder?"
+        body={<><span className="text-white">{deleteTarget?.name}</span> will be removed. Its timers move back to Unfiled — nothing is deleted.</>}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => { folderHandlers.onDelete(deleteTarget.id); setDeleteTarget(null); }}
+      />
+      <MoveToFolderSheet
+        open={!!moveTarget}
+        item={moveTarget}
+        folders={folders}
+        onClose={() => setMoveTarget(null)}
+        onMove={folderHandlers.onMoveItem}
+      />
     </div>
   );
 }
@@ -1352,18 +1540,68 @@ function ProgressRing({ progress, color, size = 260, stroke = 6 }) {
   );
 }
 
+// Mid-session exercise editor: rename the current exercise and/or change its
+// recording type. Changes apply FORWARD from the current slot only (the parent
+// handler enforces this); already-logged rounds are untouched.
+function ExerciseEditSheet({ open, initialName, initialMetricKind, onClose, onApply }) {
+  const [name, setName] = useState(initialName || '');
+  const [mk, setMk] = useState(initialMetricKind || DEFAULT_METRIC_KIND);
+  const inputRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    setName(initialName || '');
+    setMk(initialMetricKind || DEFAULT_METRIC_KIND);
+  }, [open, initialName, initialMetricKind]);
+  if (!open) return null;
+  const apply = () => { onApply(name, mk); onClose(); };
+  return (
+    <Sheet open={open} onClose={onClose} title="Change exercise" primaryLabel="Apply" onPrimary={apply}>
+      <Group>
+        <div className="px-4 py-2.5">
+          <input
+            ref={inputRef}
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onFocus={(e) => e.target.select()}
+            onKeyDown={(e) => { if (e.key === 'Enter') apply(); }}
+            placeholder="Exercise name"
+            className="w-full bg-transparent text-[17px] font-semibold text-white placeholder:text-[var(--color-tertiary)] focus:outline-none"
+          />
+        </div>
+        <div className="sep-row flex items-center justify-between px-4 py-2.5">
+          <span className="text-[15px] text-[var(--color-secondary)]">Recording type</span>
+          <select
+            value={mk}
+            onChange={(e) => setMk(e.target.value)}
+            className="bg-[var(--color-cell-pressed)] rounded-lg px-2 py-1.5 text-[14px] text-white focus:outline-none"
+          >
+            {METRIC_KINDS.map((k) => <option key={k} value={k}>{METRIC_LABEL[k]}</option>)}
+          </select>
+        </div>
+      </Group>
+      <GroupFooter>Applies from this set forward. Sets you already logged keep their exercise and type.</GroupFooter>
+    </Sheet>
+  );
+}
+
 function TimerView({ session, onRequestBack, onLogResult, onReview, activeLogHasContent, activeLog, exerciseHistory = {}, onStartDraft, onUpdateDraft }) {
-  const slots = session.slots;
+  // Slots are LOCAL state (seeded from the session) so an exercise can be
+  // renamed / re-typed mid-run without rebuilding the whole session. Re-seeds
+  // whenever the session identity changes (i.e. a fresh run from the builder).
+  const [slots, setSlots] = useState(() => session.slots);
+  useEffect(() => { setSlots(session.slots); }, [session]);
   const totalSlots = slots.length;
 
   const [currentIdx, setCurrentIdx] = useState(0);
-  const [secondsLeft, setSecondsLeft] = useState(() => slots[0]?.duration ?? 60);
+  const [secondsLeft, setSecondsLeft] = useState(() => session.slots[0]?.duration ?? 60);
   const [running, setRunning] = useState(false);
   const [preCount, setPreCount] = useState(null);
   const [audioOn, setAudioOn] = useState(true);
   // Inline logger: while an input is focused we "freeze" its target so a round
   // flip mid-typing doesn't yank the fields to the next exercise.
   const [frozenTarget, setFrozenTarget] = useState(null); // { exName, setIdx } | null
+  const [editOpen, setEditOpen] = useState(false); // mid-session exercise editor
   const prevIdxRef = useRef(0);
   const midRef = useRef(false);
 
@@ -1479,17 +1717,38 @@ function TimerView({ session, onRequestBack, onLogResult, onReview, activeLogHas
   // Frozen while typing, otherwise follows the timer.
   const logTarget = frozenTarget || liveTarget;
 
-  // Write a single field for the target set, lazily creating the draft and
-  // padding sets if needed. The value cascades to every later set that's still
-  // blank or auto-filled (hand-edited sets are preserved). Auto-saves (App
-  // persists), so cascade-filled sets are there when the timer reaches them and
-  // when the post-completion editor opens.
+  // Resolve the recording type for an exercise name at this moment, most
+  // authoritative first: live draft exercise > the type configured on its slot
+  // (pre-config or a mid-session swap) > history/catalog hint > default.
+  const resolveMetricKind = (name) => {
+    const key = normalizeExerciseName(name);
+    const draftEx = activeLog?.exercises.find((e) => normalizeExerciseName(e.nameSnapshot) === key);
+    if (draftEx?.metricKind) return draftEx.metricKind;
+    const slot = slots.find((s) => !s.isRest && normalizeExerciseName(s.name) === key && s.metricKind);
+    return slot?.metricKind || exerciseHistory[key]?.metricKind || 'weight_reps';
+  };
+
+  // Write a single field for the target set, lazily creating the draft (and a
+  // draft exercise for a mid-session swap-in that has no row yet) and padding
+  // sets if needed. The value cascades to every later set that's still blank or
+  // auto-filled (hand-edited sets are preserved). Auto-saves (App persists), so
+  // cascade-filled sets are there when the timer reaches them and when the
+  // post-completion editor opens.
   const commitLog = (exName, setIdx, field, value) => {
     let draft = activeLog || (onStartDraft && onStartDraft());
     if (!draft) return;
     const key = normalizeExerciseName(exName);
     const exIdx = draft.exercises.findIndex((e) => normalizeExerciseName(e.nameSnapshot) === key);
-    if (exIdx < 0) return;
+    if (exIdx < 0) {
+      // Swapped-in exercise with no draft row yet — create it on first log.
+      const mk = resolveMetricKind(exName);
+      let sets = [];
+      while (sets.length <= setIdx) sets.push(emptySet(mk));
+      sets = cascadeField(sets, setIdx, field, value);
+      const newEx = emptyExercise({ name: exName, metricKind: mk, setCount: 0 });
+      onUpdateDraft({ ...draft, exercises: [...draft.exercises, { ...newEx, sets }] });
+      return;
+    }
     const ex = draft.exercises[exIdx];
     let sets = ex.sets.slice();
     while (sets.length <= setIdx) sets.push(emptySet(ex.metricKind));
@@ -1520,6 +1779,52 @@ function TimerView({ session, onRequestBack, onLogResult, onReview, activeLogHas
     onUpdateDraft({ ...draft, exercises: draft.exercises.map((e, i) => (i === exIdx ? { ...ex, sets } : e)) });
   };
 
+  // Mid-session swap / recording-type change. Cascades FORWARD only: from the
+  // current slot onward, this exercise adopts the new name and/or recording type;
+  // already-completed rounds keep their original exercise and data.
+  //   - Rename  -> the old draft exercise is truncated to its already-performed
+  //               sets; the renamed exercise is created lazily on the next log
+  //               (its set count restarts at 1), so past + future are separate
+  //               rows in history — exactly the "did A for 5, then B for 5" case.
+  //   - Type only (same name) -> convert the current exercise's metric in place,
+  //               carrying fields valid in both kinds (model stores one kind per
+  //               exercise, so this is the one change that isn't a forward split).
+  const applyExerciseEdit = (rawName, newMk) => {
+    if (isComplete || !currentSlot || currentSlot.isRest) return;
+    const curName = currentSlot.name;
+    const curKey = normalizeExerciseName(curName);
+    const newName = (rawName || '').trim() || curName;
+    const renamed = normalizeExerciseName(newName) !== curKey;
+    const keepUpTo = liveTarget?.setIdx ?? 0; // sets performed before this slot
+
+    // 1) Forward-only slot rewrite.
+    setSlots((prev) => prev.map((s, i) => {
+      if (i < currentIdx || s.isRest) return s;
+      if (normalizeExerciseName(s.name) !== curKey) return s;
+      return { ...s, name: newName, metricKind: newMk };
+    }));
+
+    // 2) Draft reconciliation (only if something's been logged).
+    const draft = activeLog;
+    if (!draft) return;
+    const oldIdx = draft.exercises.findIndex((e) => normalizeExerciseName(e.nameSnapshot) === curKey);
+    if (oldIdx < 0) return;
+    const ex = draft.exercises[oldIdx];
+
+    if (renamed) {
+      const trimmed = { ...ex, sets: ex.sets.slice(0, keepUpTo) };
+      onUpdateDraft({ ...draft, exercises: draft.exercises.map((e, i) => (i === oldIdx ? trimmed : e)) });
+    } else if (ex.metricKind !== newMk) {
+      const keepFields = fieldsForMetric(newMk).filter((f) => fieldsForMetric(ex.metricKind).includes(f));
+      const sets = ex.sets.map((s) => {
+        const ns = emptySet(newMk); ns.id = s.id; ns.done = s.done;
+        for (const f of keepFields) ns[f] = s[f];
+        return ns;
+      });
+      onUpdateDraft({ ...draft, exercises: draft.exercises.map((e, i) => (i === oldIdx ? { ...ex, metricKind: newMk, sets } : e)) });
+    }
+  };
+
   const showPre = preCount !== null;
   const hasStarted = currentIdx > 0 || running;
   const slotDur = currentSlot?.duration ?? 60;
@@ -1533,9 +1838,12 @@ function TimerView({ session, onRequestBack, onLogResult, onReview, activeLogHas
     : 'rgb(255, 214, 10)';
   const sessionProgress = currentIdx / totalSlots;
 
-  // round indicator
+  // round indicator. Intra-circuit rests carry a round in meta; between-circuit
+  // rests don't (so they keep the simpler label).
   const roundLine = currentSlot?.isRest
-    ? 'Rest between circuits'
+    ? (currentSlot?.meta?.round
+      ? `Circuit ${currentSlot.meta.circuit}/${currentSlot.meta.totalCircuits} · Round ${currentSlot.meta.round}/${currentSlot.meta.totalRoundsInCircuit}`
+      : 'Rest between circuits')
     : currentSlot?.meta?.circuit
     ? `Circuit ${currentSlot.meta.circuit}/${currentSlot.meta.totalCircuits} · Round ${currentSlot.meta.round}/${currentSlot.meta.totalRoundsInCircuit}`
     : currentSlot?.meta?.round
@@ -1585,7 +1893,16 @@ function TimerView({ session, onRequestBack, onLogResult, onReview, activeLogHas
           </div>
 
           <div className="text-center mt-7 px-4">
-            <div className="text-[22px] font-semibold tracking-tight">{currentSlot.name}</div>
+            {currentSlot.isRest ? (
+              <div className="text-[22px] font-semibold tracking-tight">{currentSlot.name}</div>
+            ) : (
+              <button type="button" onClick={() => setEditOpen(true)}
+                className="press inline-flex items-center gap-1.5 max-w-full"
+                aria-label="Change exercise or recording type">
+                <span className="text-[22px] font-semibold tracking-tight truncate">{currentSlot.name}</span>
+                <Pencil size={15} strokeWidth={2.2} className="text-[var(--color-tertiary)] shrink-0" />
+              </button>
+            )}
             <div className="mt-1 text-[14px] text-[var(--color-secondary)]">
               {currentSlot.isRest && 'Recover'}
               {currentSlot.side === 'L' && 'Left side'}
@@ -1601,7 +1918,10 @@ function TimerView({ session, onRequestBack, onLogResult, onReview, activeLogHas
             const key = normalizeExerciseName(logTarget.exName);
             const h = exerciseHistory[key];
             const draftEx = activeLog?.exercises.find((e) => normalizeExerciseName(e.nameSnapshot) === key);
-            const metricKind = h?.metricKind || draftEx?.metricKind || 'weight_reps';
+            // Draft wins (a live recording-type change or pre-config), then the
+            // slot's configured type, then the history hint, then the default.
+            const slotMk = slots.find((s) => !s.isRest && normalizeExerciseName(s.name) === key && s.metricKind)?.metricKind;
+            const metricKind = draftEx?.metricKind || slotMk || h?.metricKind || 'weight_reps';
             const fields = fieldsForMetric(metricKind);
             const curSet = draftEx?.sets?.[logTarget.setIdx];
             const sugg = h?.suggestions?.[logTarget.setIdx];
@@ -1731,6 +2051,14 @@ function TimerView({ session, onRequestBack, onLogResult, onReview, activeLogHas
           <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${audioOn ? 'translate-x-6' : 'translate-x-1'}`} />
         </button>
       </div>
+
+      <ExerciseEditSheet
+        open={editOpen && !!currentSlot && !currentSlot.isRest}
+        initialName={currentSlot?.name || ''}
+        initialMetricKind={currentSlot && !currentSlot.isRest ? resolveMetricKind(currentSlot.name) : DEFAULT_METRIC_KIND}
+        onClose={() => setEditOpen(false)}
+        onApply={applyExerciseEdit}
+      />
     </div>
   );
 }
@@ -1745,6 +2073,7 @@ export default function App() {
   const [presetBlocks, setPresetBlocks] = useState([]);
   const [customSession, setCustomSession] = useState(null);
   const [library, setLibrary] = useState(() => loadLibrary());
+  const [folders, setFolders] = useState(() => loadFolders());
   const [saveOpen, setSaveOpen] = useState(false);
   const [loadedFromId, setLoadedFromId] = useState(null);
   const [savePromptOpen, setSavePromptOpen] = useState(false);
@@ -1768,6 +2097,7 @@ export default function App() {
   const [discardLeavePending, setDiscardLeavePending] = useState(false); // discard should also leave the timer
 
   const persist = (next) => { setLibrary(next); saveLibrary(next); };
+  const persistFolders = (next) => { setFolders(next); saveFolders(next); };
   const persistJournal = (next) => { setJournal(next); saveJournal(next); };
   const persistCatalog = (next) => { setCatalog(next); saveExercises(next); };
   const persistActiveLog = (next) => { setActiveLog(next); if (next) saveActiveLog(next); else clearActiveLog(); };
@@ -1847,6 +2177,15 @@ export default function App() {
     persist(library.filter(i => i.id !== pendingDelete.id));
     if (pendingDelete.id === loadedFromId) setLoadedFromId(null);
     setPendingDelete(null);
+  };
+
+  // --- folders --------------------------------------------------------------
+  const folderHandlers = {
+    onCreate: (name) => { if (name && name.trim()) persistFolders(addFolder(folders, name).folders); },
+    onRename: (id, name) => persistFolders(renameFolder(folders, id, name)),
+    // Deleting a folder unfiles its timers (back to root) — never deletes them.
+    onDelete: (id) => { persist(unfileItems(library, id)); persistFolders(removeFolder(folders, id)); },
+    onMoveItem: (itemId, folderId) => persist(moveItemToFolder(library, itemId, folderId)),
   };
 
   const triggerSave = () => {
@@ -2172,9 +2511,10 @@ export default function App() {
   };
 
   // --- backup ---------------------------------------------------------------
-  const getBackup = () => buildBackup({ library, exercises: catalog, journal, schedule });
+  const getBackup = () => buildBackup({ library, folders, exercises: catalog, journal, schedule });
   const onImported = (parsed) => {
     setLibrary(parsed.library);
+    setFolders(parsed.folders);
     setJournal(parsed.journal);
     setCatalog(parsed.exercises);
     setSchedule(parsed.schedule);
@@ -2225,12 +2565,14 @@ export default function App() {
       const key = normalizeExerciseName(d.name);
       if (map[key]) continue;
       const ex = findExercise(catalog, d.name);
-      if (!ex) continue;
-      const prev = lastExerciseLogged(journal, ex.id, { beforeDate: todayKey() });
+      const prev = ex ? lastExerciseLogged(journal, ex.id, { beforeDate: todayKey() }) : null;
+      // Configured recording type (from the timer) wins as the default; fall back
+      // to the exercise's last-logged kind, then catalog default. Brand-new names
+      // (no catalog entry) still get an entry so the logger knows their type.
       map[key] = {
-        exerciseId: ex.id,
-        metricKind: prev?.metricKind || ex.defaultMetricKind || 'weight_reps',
-        recent: recentSessionsForExercise(journal, ex.id, 3),
+        exerciseId: ex?.id || null,
+        metricKind: d.metricKind || prev?.metricKind || ex?.defaultMetricKind || 'weight_reps',
+        recent: ex ? recentSessionsForExercise(journal, ex.id, 3) : [],
         suggestions: prev?.sets || [],
       };
     }
@@ -2260,6 +2602,8 @@ export default function App() {
         {view === 'library' && (
           <LibraryView
             items={library}
+            folders={folders}
+            folderHandlers={folderHandlers}
             onClose={closeLibrary}
             onLoad={(item) => { setScheduledLaunch(null); loadFromLibrary(item); }}
             onLog={openLogForItem}

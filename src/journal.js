@@ -183,7 +183,10 @@ export function seedExercisesForLog({ derived, catalog, journal, beforeDate, exc
     const cx = res.exercise;
 
     const prevEx = lastExerciseLogged(journal, cx.id, { beforeDate, excludeId });
-    const metricKind = prevEx?.metricKind || cx.defaultMetricKind || DEFAULT_METRIC_KIND;
+    // A metricKind configured on the timer (d.metricKind) is an explicit choice
+    // and wins. Otherwise fall back to the exercise's last-logged kind, then the
+    // catalog default. (History still supplies carry-forward VALUES separately.)
+    const metricKind = d.metricKind || prevEx?.metricKind || cx.defaultMetricKind || DEFAULT_METRIC_KIND;
     const unit = prevEx?.unit || cx.defaultUnit || DEFAULT_UNIT;
     // Blank sets. Last-time values surface as editor placeholders (via
     // suggestionsForExercise), NOT pre-filled values, so an untouched set is

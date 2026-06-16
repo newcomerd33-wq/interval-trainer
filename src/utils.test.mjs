@@ -169,13 +169,45 @@ test('exercisesForItem — unknown/empty returns []', () => {
   assert.deepEqual(exercisesForItem({ sourceType: 'preset' }), []);
 });
 
+test('expandSetsFromSlots carries a configured metricKind (and only when present)', () => {
+  const slots = [
+    { name: 'Squat', duration: 60, metricKind: 'time' },
+    { name: 'Curl', duration: 60 }, // no metricKind -> omitted from derived shape
+    { name: 'Rest', duration: 30, isRest: true },
+  ];
+  assert.deepEqual(expandSetsFromSlots(slots), [
+    { name: 'Squat', mode: 'standard', setCount: 1, metricKind: 'time' },
+    { name: 'Curl', mode: 'standard', setCount: 1 },
+  ]);
+});
+
+test('exercisesForItem — custom skips rest items and carries metricKind', () => {
+  const item = { sourceType: 'custom', custom: { circuits: [{ rounds: 2, exercises: [
+    { kind: 'exercise', name: 'Press', mode: 'standard', metricKind: 'reps_only' },
+    { kind: 'rest', duration: 60 },
+    { kind: 'exercise', name: 'Row', mode: 'unilateral' },
+  ] }] } };
+  assert.deepEqual(exercisesForItem(item), [
+    { name: 'Press', mode: 'standard', setCount: 2, metricKind: 'reps_only' },
+    { name: 'Row', mode: 'unilateral', setCount: 2 },
+  ]);
+});
+
 // --- backup -------------------------------------------------------------------
 
 test('buildBackup wraps stores with version + timestamp', () => {
-  const b = buildBackup({ library: [1], exercises: [2], journal: [3], schedule: { rules: [], oneOffs: [], exceptions: [] } }, 1234);
-  assert.equal(b.version, 1);
+  const b = buildBackup({ library: [1], folders: [{ id: 'f' }], exercises: [2], journal: [3], schedule: { rules: [], oneOffs: [], exceptions: [] } }, 1234);
+  assert.equal(b.version, 2);
   assert.equal(b.exportedAt, 1234);
   assert.deepEqual(b.library, [1]);
+  assert.deepEqual(b.folders, [{ id: 'f' }]);
+});
+
+test('buildBackup defaults folders to []; parseBackup tolerates a v1 backup with no folders', () => {
+  assert.deepEqual(buildBackup({ library: [] }).folders, []);
+  // A legacy v1 export (no folders field) imports cleanly with folders -> [].
+  const p = parseBackup({ version: 1, library: [{ id: 'a' }], schedule: {} });
+  assert.deepEqual(p.folders, []);
 });
 
 test('buildBackup -> parseBackup round-trips', () => {

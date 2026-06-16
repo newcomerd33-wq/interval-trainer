@@ -11,16 +11,7 @@ import { useState } from 'react';
 import { Plus, Trash2, ChevronDown, ChevronUp, Check } from 'lucide-react';
 import { NavBar, Group, GroupHeader, GroupFooter } from './ui.jsx';
 import { emptyExercise, emptySet, fieldsForMetric, SET_NUMERIC_FIELDS, ALL_SET_FIELDS, SET_TEXT_FIELDS, cascadeField, isSetComplete } from '../journal.js';
-import { METRIC_KINDS } from '../catalog.js';
-
-const KIND_LABEL = {
-  weight_reps: 'Weight × reps',
-  reps_only: 'Reps only',
-  time: 'Time',
-  distance_time: 'Distance + time',
-  bands: 'Bands',
-  freeform: 'Freeform',
-};
+import { METRIC_KINDS, METRIC_LABEL as KIND_LABEL } from '../catalog.js';
 
 const FIELD = {
   weight: { label: 'Weight', ph: 'wt' },
