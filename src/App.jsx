@@ -679,10 +679,11 @@ function Wizard({ onPickConfig, onPickCustom, onPickRotation }) {
 // =============================================================================
 // SAVE-AS DIALOG
 // =============================================================================
-function SaveDialog({ open, defaultName, onClose, onSave }) {
+function SaveDialog({ open, defaultName, folders = [], defaultFolderId = null, onClose, onSave }) {
   const [name, setName] = useState('');
+  const [folderId, setFolderId] = useState(null);
   const inputRef = useRef(null);
-  useEffect(() => { if (open) setName(defaultName || ''); }, [open, defaultName]);
+  useEffect(() => { if (open) { setName(defaultName || ''); setFolderId(defaultFolderId ?? null); } }, [open, defaultName, defaultFolderId]);
   // Focus + scroll into view once mounted; redo after a delay so iOS keyboard animation finishes
   useEffect(() => {
     if (!open) return;
@@ -695,7 +696,7 @@ function SaveDialog({ open, defaultName, onClose, onSave }) {
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [open]);
   if (!open) return null;
-  const submit = () => { if (name.trim()) { onSave(name.trim()); onClose(); } };
+  const submit = () => { if (name.trim()) { onSave(name.trim(), folderId); onClose(); } };
   return (
     <>
       <div className="fixed inset-0 z-40 bg-black/70 fadeIn" onClick={onClose} />
@@ -722,6 +723,17 @@ function SaveDialog({ open, defaultName, onClose, onSave }) {
             placeholder="Front squat + bench"
             className="mt-4 w-full bg-[var(--color-cell)] rounded-lg px-3 py-2.5 text-[15px] text-white text-center placeholder:text-[var(--color-tertiary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/50"
           />
+          <div className="mt-3 flex items-center gap-2">
+            <span className="text-[13px] text-[var(--color-secondary)] shrink-0">Folder</span>
+            <select
+              value={folderId ?? ''}
+              onChange={e => setFolderId(e.target.value || null)}
+              className="flex-1 bg-[var(--color-cell)] rounded-lg px-2.5 py-2 text-[15px] text-white focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/50"
+            >
+              <option value="">Unfiled</option>
+              {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </select>
+          </div>
         </div>
         <div className="flex border-t border-white/10">
           <button type="button" onClick={onClose} className="press flex-1 h-11 text-[15px] text-[var(--color-accent)]">Cancel</button>
@@ -2270,24 +2282,24 @@ export default function App() {
     setSavePromptOpen(false);
   };
 
-  const saveCurrent = (name) => {
+  const saveCurrent = (name, folderId = null) => {
     let item;
     if (mode === 'preset' && presetConfig) {
       item = {
-        id: uid(), savedAt: Date.now(), name,
+        id: uid(), savedAt: Date.now(), name, folderId: folderId ?? null,
         sourceType: 'preset',
         configId: presetConfig.id,
         blocks: presetBlocks.map(b => ({ type: b.type, name: b.name })),
       };
     } else if (mode === 'custom' && customSession) {
       item = {
-        id: uid(), savedAt: Date.now(), name,
+        id: uid(), savedAt: Date.now(), name, folderId: folderId ?? null,
         sourceType: 'custom',
         custom: JSON.parse(JSON.stringify(customSession)),
       };
     } else if (mode === 'rotation' && rotation) {
       item = {
-        id: uid(), savedAt: Date.now(), name,
+        id: uid(), savedAt: Date.now(), name, folderId: folderId ?? null,
         sourceType: 'rotation',
         rotation: JSON.parse(JSON.stringify(rotation)),
       };
@@ -2713,7 +2725,9 @@ export default function App() {
             onUpdateDraft={persistActiveLog}
           />
         )}
-        <SaveDialog open={saveOpen} defaultName={defaultName} onClose={() => setSaveOpen(false)} onSave={saveCurrent} />
+        <SaveDialog open={saveOpen} defaultName={defaultName} folders={folders}
+          defaultFolderId={library.find(i => i.id === loadedFromId)?.folderId ?? null}
+          onClose={() => setSaveOpen(false)} onSave={saveCurrent} />
         <SavePromptDialog
           open={savePromptOpen}
           originalName={originalName}
